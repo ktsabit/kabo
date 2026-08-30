@@ -23,3 +23,7 @@ services:
       timeout: 3s
       start_period: 5s
       retries: 3
+
+networks:
+  pangolin:
+    external: true
