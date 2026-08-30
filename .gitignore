@@ -1,0 +1,9 @@
+node_modules/
+client/node_modules/
+client/dist/
+.env
+.env.local
+server/cambio-server
+*.log
+.DS_Store
+

@@ -1,0 +1,117 @@
+# Cambio Discord Activity MVP
+
+A playable, server-authoritative Cambio-style card game. It runs as a normal web app for local development and uses the same React client inside a Discord Activity.
+
+## What is implemented
+
+- Two to eight players in in-memory rooms.
+- Four face-down cards per player, arranged 2×2; each player privately sees their bottom two once.
+- Draw, replace, or discard turns.
+- 7/8 own peek, 9/10 opponent peek, J/Q any-two-card swap, and K opponent peek followed by any-two-card swap.
+- Server-ordered slap races for every new discard. A stale discard event cannot win.
+- Wrong slap penalty cards and the opponent-card slap/gift flow.
+- Immediate round endings for an exhausted pile, an empty hand, or a call of Cambio.
+- Full scoring, including Jokers at 0 and red Kings at −1.
+- Private per-player snapshots: unrevealed card values never reach other browsers.
+- Discord OAuth code exchange, opaque game sessions, Activity `instanceId` rooms, and optional Activity Instance API validation.
+- Reconnect support for the same player identity and one-click rematches.
+
+Card faces use the CC0-licensed [`@letele/playing-cards`](https://github.com/letele/playing-cards) SVG deck, based on Adrian Kennard's classic designs. The custom indigo bear artwork remains the card back.
+
+## Repository layout
+
+```text
+client/             React + TypeScript + Vite table UI
+server/             Go HTTP/WebSocket server and game state machine
+server/game/        Authoritative rules and tests
+shared/             Browser protocol types and wire-protocol notes
+Dockerfile          Single-origin production image
+```
+
+## Run locally
+
+Requirements: Node 20.19+ (Node 24 works) and Go 1.24+.
+
+```bash
+cd server
+ALLOW_GUESTS=true go run .
+```
+
+In another terminal:
+
+```bash
+cd client
+npm install
+npm run dev
+```
+
+Open `http://localhost:5173/?room=friends&name=Ada`. To simulate another player, use a different browser profile or add a distinct `user` query parameter.
+
+Run verification with:
+
+```bash
+npm --prefix client run build
+npm --prefix client test
+cd server && go test ./...
+```
+
+## Production deployment
+
+The repository includes a single-origin Docker image that builds the React client, compiles the Go server, serves both on one port, disables browser guests by default, and exposes `/healthz` for the host's health check.
+
+Build the public Discord client ID into the browser bundle:
+
+```bash
+docker build \
+  --build-arg VITE_DISCORD_CLIENT_ID=YOUR_DISCORD_APPLICATION_ID \
+  -t cambio-activity .
+```
+
+Run the container with server-only secrets:
+
+```bash
+docker run --rm -p 8080:8080 \
+  -e DISCORD_CLIENT_ID=YOUR_DISCORD_APPLICATION_ID \
+  -e DISCORD_CLIENT_SECRET=YOUR_DISCORD_CLIENT_SECRET \
+  -e DISCORD_BOT_TOKEN=YOUR_DISCORD_BOT_TOKEN \
+  cambio-activity
+```
+
+Choose a Docker host that provides a public HTTPS domain, forwards WebSocket upgrades, keeps one process alive, and sends traffic to port 8080. Keep this MVP at exactly **one replica** with no scale-to-zero: rooms and sessions are in memory, so restarts erase them and multiple replicas would split players unless Redis or a durable room service is added first.
+
+### Cloudflare hosting
+
+The current Go server cannot run as a normal Cloudflare Worker. Cloudflare Containers can run this Docker image, but Containers require the Workers Paid plan. A genuinely free Cloudflare deployment would require replacing the Go room server with a Worker plus one SQLite-backed Durable Object per Activity instance and using the Hibernation WebSocket API. The React client and wire protocol can remain; the authoritative room implementation would be a backend migration.
+
+## Discord Activity setup (current SDK flow)
+
+1. Create an application in the [Discord Developer Portal](https://discord.com/developers/applications), enable Activities, and keep the automatically-created **Launch** Entry Point command. Discord currently creates this command when Activities are enabled.
+2. Under Installation, enable both User Install and Guild Install. Under Activity Settings, select every platform you intend to test (desktop, web, iOS, and/or Android). Under OAuth2, add `https://127.0.0.1` as the placeholder redirect URI; the Embedded App SDK handles the Activity redirect.
+3. Copy the client ID to `client/.env.local` as `VITE_DISCORD_CLIENT_ID`. Set `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET` only on the Go server. Never expose the client secret to Vite.
+4. Serve the built client and Go API from the same public HTTPS origin. For development, tunnel port 8080 after building the client, or tunnel the Vite port while separately mapping the API. In **Activities → URL Mappings**, map prefix `/` to the public hostname **without** `https://`.
+5. Set `ALLOW_GUESTS=false` in production. Set `DISCORD_BOT_TOKEN` to make the backend validate the supplied instance through Discord's Activity Instance API before creating a game session.
+
+The client follows the official flow: construct `DiscordSDK`, wait for `ready()`, request `identify` and `applications.commands`, exchange the authorization code on `/api/token`, call `authenticate`, and use `sdk.instanceId` as the room key. Inside the proxy it uses `/.proxy/api/token` and `/.proxy/ws`; normal browser mode uses `/api/token` and `/ws`.
+
+The code integration is Activity-ready. Launch readiness still requires: real portal credentials, a public HTTPS deployment, the `/` URL mapping, supported-platform selections, and one successful test launch from Discord's Developer Activity Shelf. The current SDK dependency is `@discord/embedded-app-sdk` 2.5.0.
+
+Credential locations in the Developer Portal:
+
+- `VITE_DISCORD_CLIENT_ID` and `DISCORD_CLIENT_ID`: **General Information → Application ID** (also shown as the OAuth2 Client ID). This value is public.
+- `DISCORD_CLIENT_SECRET`: **OAuth2 → Client Secret**. This is private and belongs only in the host's runtime secrets.
+- `DISCORD_BOT_TOKEN`: **Bot → Token → Reset Token** if Discord is not currently showing one. This is private and belongs only in the host's runtime secrets.
+
+Discord Activities route network traffic through their proxy. WebSockets are supported; WebRTC is not. Because this app keeps assets, OAuth, and WebSocket traffic on one mapped origin, no extra third-party URL mappings are required. See Discord's current [Activity tutorial](https://docs.discord.com/developers/activities/building-an-activity), [networking guide](https://docs.discord.com/developers/activities/development-guides/networking), and [multiplayer/instance guide](https://docs.discord.com/developers/activities/development-guides/multiplayer-experience).
+
+## MVP rule decisions
+
+- A special power triggers only when the drawn special card is discarded. Replacing one of your cards with it does not trigger the power.
+- Calling Cambio is allowed at the start of your own turn and ends the round immediately.
+- K's peek and swap are both mandatory; the peeked card may be one side of the swap.
+- J/Q/K swaps require two different occupied slots, but both slots may belong to the same player.
+- A successful slap creates a new discard event, allowing same-rank slap chains. If it targets an opponent, that gift is resolved before the next slap in the chain.
+- The active turn is completed before an empty draw pile ends the round, except when a penalty needs a card and none remains.
+
+## Deliberately deferred
+
+Persistent rooms/history, spectator mode for mid-round joins, server restarts without data loss, a timed slap window, moderation controls, sounds/animation polish, telemetry, and horizontal scaling are post-MVP work. Moving rooms to Redis (or a durable room actor) is the natural next backend step.
