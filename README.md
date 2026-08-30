@@ -59,6 +59,16 @@ cd server && go test ./...
 
 The repository includes a single-origin Docker image that builds the React client, compiles the Go server, serves both on one port, disables browser guests by default, and exposes `/healthz` for the host's health check.
 
+Run the production image with Docker Compose:
+
+```bash
+cp .env.example .env
+# Fill in the Discord values in .env, then set ALLOW_GUESTS=false for production.
+docker compose up --build -d
+```
+
+The app is available at `http://localhost:8080`. Stop it with `docker compose down`. The Compose setup keeps the app at one replica because rooms and sessions are stored in memory.
+
 Build the public Discord client ID into the browser bundle:
 
 ```bash
