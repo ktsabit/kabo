@@ -23,7 +23,13 @@ services:
       timeout: 3s
       start_period: 5s
       retries: 3
+      networks:
+        pangolin:
+          aliases:
+            - kabo-app
+
 
 networks:
   pangolin:
     external: true
+    
