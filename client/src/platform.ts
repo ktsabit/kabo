@@ -14,6 +14,11 @@ export interface PlatformSession {
   participants?: number;
 }
 
+interface DiscordGuildMember {
+  nick?: string | null;
+  avatar?: string | null;
+}
+
 function clean(value: string | null, fallback: string): string {
   const trimmed = value?.trim();
   return trimmed ? trimmed.slice(0, 40) : fallback;
@@ -34,17 +39,22 @@ function activityError(message: string, cause: unknown): Error {
   else if (typeof cause === "string") detail = cause;
   else if (cause && typeof cause === "object") {
     const value = cause as { message?: unknown; code?: unknown };
-    detail = [value.message, value.code].filter((part) => typeof part === "string" || typeof part === "number").join(" · ");
+    detail = [value.message, value.code]
+      .filter((part) => typeof part === "string" || typeof part === "number")
+      .join(" · ");
   }
   return new Error(detail ? `${message} (${detail})` : message);
 }
 
 async function discordClientID(): Promise<string> {
-  if (import.meta.env.VITE_DISCORD_CLIENT_ID) return import.meta.env.VITE_DISCORD_CLIENT_ID;
+  if (import.meta.env.VITE_DISCORD_CLIENT_ID)
+    return import.meta.env.VITE_DISCORD_CLIENT_ID;
   const response = await fetch("/.proxy/api/config", { cache: "no-store" });
-  if (!response.ok) throw new Error("Kabo's server is missing DISCORD_CLIENT_ID.");
+  if (!response.ok)
+    throw new Error("Kabo's server is missing DISCORD_CLIENT_ID.");
   const config = (await response.json()) as { clientId?: string };
-  if (!config.clientId) throw new Error("Kabo's server returned an empty Discord Application ID.");
+  if (!config.clientId)
+    throw new Error("Kabo's server returned an empty Discord Application ID.");
   return config.clientId;
 }
 
@@ -65,10 +75,13 @@ async function initializeDiscord(): Promise<PlatformSession> {
       response_type: "code",
       state: "",
       prompt: "none",
-      scope: ["identify", "applications.commands"],
+      scope: ["identify", "applications.commands", "guilds.members.read"],
     }));
   } catch (error) {
-    throw activityError("Discord authorization failed. Check the OAuth2 redirect and installation settings", error);
+    throw activityError(
+      "Discord authorization failed. Check the OAuth2 redirect and installation settings",
+      error,
+    );
   }
   const response = await fetch("/.proxy/api/token", {
     method: "POST",
@@ -77,20 +90,49 @@ async function initializeDiscord(): Promise<PlatformSession> {
   });
   if (!response.ok) {
     const detail = (await response.text()).trim().slice(0, 180);
-    throw new Error(`Kabo's server could not complete Discord sign-in${detail ? `: ${detail}` : ` (HTTP ${response.status})`}`);
+    throw new Error(
+      `Kabo's server could not complete Discord sign-in${detail ? `: ${detail}` : ` (HTTP ${response.status})`}`,
+    );
   }
-  const token = (await response.json()) as { access_token: string; session: string };
+  const token = (await response.json()) as {
+    access_token: string;
+    session: string;
+  };
   let auth: Awaited<ReturnType<DiscordSDKType["commands"]["authenticate"]>>;
   try {
-    auth = await sdk.commands.authenticate({ access_token: token.access_token });
+    auth = await sdk.commands.authenticate({
+      access_token: token.access_token,
+    });
   } catch (error) {
     throw activityError("Discord authentication failed", error);
   }
   if (!auth?.user) throw new Error("Discord did not return a user.");
 
+  let member: DiscordGuildMember | null = null;
+
+  if (sdk.guildId) {
+    try {
+      const memberResponse = await fetch(
+        `https://discord.com/api/v10/users/@me/guilds/${sdk.guildId}/member`,
+        {
+          headers: {
+            Authorization: `Bearer ${token.access_token}`,
+          },
+        },
+      );
+
+      if (memberResponse.ok) {
+        member = (await memberResponse.json()) as DiscordGuildMember;
+      }
+    } catch {
+      // Fall back to the global Discord profile.
+    }
+  }
+
   let participants: number | undefined;
   try {
-    participants = (await sdk.commands.getInstanceConnectedParticipants()).participants.length;
+    participants = (await sdk.commands.getInstanceConnectedParticipants())
+      .participants.length;
   } catch {
     // Participant presence is helpful context, but is not required to play.
   }
@@ -99,7 +141,7 @@ async function initializeDiscord(): Promise<PlatformSession> {
     mode: "discord",
     identity: {
       id: auth.user.id,
-      name: auth.user.global_name ?? auth.user.username,
+      name: member?.nick ?? auth.user.global_name ?? auth.user.username,
     },
     roomId: sdk.instanceId,
     session: token.session,
@@ -110,11 +152,15 @@ async function initializeDiscord(): Promise<PlatformSession> {
 
 function initializeBrowser(): PlatformSession {
   const params = new URLSearchParams(window.location.search);
-  const storedID = localStorage.getItem("cambio:user-id") || `web-${randomID()}`;
+  const storedID =
+    localStorage.getItem("cambio:user-id") || `web-${randomID()}`;
   localStorage.setItem("cambio:user-id", storedID);
   const identity = {
     id: clean(params.get("user"), storedID),
-    name: clean(params.get("name"), localStorage.getItem("cambio:name") || "Guest Player"),
+    name: clean(
+      params.get("name"),
+      localStorage.getItem("cambio:name") || "Guest Player",
+    ),
   };
   localStorage.setItem("cambio:name", identity.name);
   return {
@@ -131,7 +177,9 @@ export async function initializePlatform(): Promise<PlatformSession> {
 
 export function websocketURL(session: PlatformSession): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const url = new URL(`${protocol}//${window.location.host}${session.apiPrefix}/ws`);
+  const url = new URL(
+    `${protocol}//${window.location.host}${session.apiPrefix}/ws`,
+  );
   url.searchParams.set("room", session.roomId);
   if (session.session) {
     url.searchParams.set("session", session.session);
