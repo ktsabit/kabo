@@ -30,6 +30,7 @@ type server struct {
 
 func main() {
 	port := env("PORT", "8080")
+
 	s := &server{
 		rooms:    transport.NewManager(),
 		sessions: auth.NewSessions(),
@@ -42,25 +43,33 @@ func main() {
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				origin := r.Header.Get("Origin")
-				return origin == "" || sameOrigin(origin, r.Host) || strings.HasSuffix(origin, ".discordsays.com")
+				return origin == "" ||
+					sameOrigin(origin, r.Host) ||
+					strings.HasSuffix(origin, ".discordsays.com")
 			},
 		},
 	}
 
 	mux := http.NewServeMux()
+
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
+
 	mux.HandleFunc("/api/config", func(w http.ResponseWriter, _ *http.Request) {
 		if s.discord.ClientID == "" {
 			http.Error(w, "Discord Application ID is not configured", http.StatusServiceUnavailable)
 			return
 		}
+
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
-		_ = json.NewEncoder(w).Encode(map[string]string{"clientId": s.discord.ClientID})
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"clientId": s.discord.ClientID,
+		})
 	})
+
 	mux.HandleFunc("/api/token", s.handleToken)
 	mux.HandleFunc("/ws", s.handleWebSocket)
 
@@ -71,6 +80,7 @@ func main() {
 	}
 
 	log.Printf("Kabo server listening on :%s", port)
+
 	if err := http.ListenAndServe(":"+port, securityHeaders(mux)); err != nil {
 		log.Fatal(err)
 	}
@@ -81,35 +91,61 @@ func (s *server) handleToken(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
 	var body struct {
 		Code       string `json:"code"`
 		InstanceID string `json:"instanceId"`
+		GuildID    string `json:"guildId"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil || body.Code == "" || !safeID.MatchString(body.InstanceID) {
+
+	if err := json.NewDecoder(
+		http.MaxBytesReader(w, r.Body, 8<<10),
+	).Decode(&body); err != nil ||
+		body.Code == "" ||
+		!safeID.MatchString(body.InstanceID) ||
+		(body.GuildID != "" && !safeID.MatchString(body.GuildID)) {
 		http.Error(w, "invalid token request", http.StatusBadRequest)
 		return
 	}
-	token, identity, err := s.discord.Exchange(r.Context(), body.Code)
+
+	token, identity, err := s.discord.Exchange(
+		r.Context(),
+		body.Code,
+		body.GuildID,
+	)
 	if err == nil {
-		err = s.discord.ValidateInstance(r.Context(), body.InstanceID, identity.ID)
+		err = s.discord.ValidateInstance(
+			r.Context(),
+			body.InstanceID,
+			identity.ID,
+		)
 	}
+
 	if err != nil {
 		log.Printf("Discord authentication failed: %v", err)
 		http.Error(w, "Discord authentication failed", http.StatusUnauthorized)
 		return
 	}
+
 	lifetime := time.Hour
 	if token.ExpiresIn > 0 {
 		lifetime = time.Duration(token.ExpiresIn) * time.Second
 	}
-	sessionID, err := s.sessions.Create(identity, body.InstanceID, lifetime)
+
+	// Identity is intentionally a value here; Sessions.Create expects auth.Identity.
+	sessionID, err := s.sessions.Create(*identity, body.InstanceID, lifetime)
 	if err != nil {
 		http.Error(w, "could not create game session", http.StatusInternalServerError)
 		return
 	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(w).Encode(map[string]string{"access_token": token.AccessToken, "session": sessionID})
+
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"access_token": token.AccessToken,
+		"session":      sessionID,
+	})
 }
 
 func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -121,19 +157,26 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	var identity auth.Identity
 	var err error
+
 	if sessionID := r.URL.Query().Get("session"); sessionID != "" {
 		identity, err = s.sessions.Resolve(sessionID, roomID)
 	} else if s.allowGuests {
-		identity = auth.Identity{ID: r.URL.Query().Get("user"), Name: strings.TrimSpace(r.URL.Query().Get("name"))}
+		identity = auth.Identity{
+			ID:   r.URL.Query().Get("user"),
+			Name: strings.TrimSpace(r.URL.Query().Get("name")),
+		}
+
 		if !safeID.MatchString(identity.ID) {
 			err = errors.New("invalid guest identity")
 		}
+
 		if len(identity.Name) == 0 || len(identity.Name) > 40 {
 			identity.Name = "Guest"
 		}
 	} else {
 		err = errors.New("authentication required")
 	}
+
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
@@ -143,12 +186,25 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	client, err := s.rooms.Join(roomID, identity.ID, identity.Name, conn)
+
+	client, err := s.rooms.Join(
+		roomID,
+		identity.ID,
+		identity.Name,
+		conn,
+	)
 	if err != nil {
-		_ = conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`{"type":"error","code":"join_failed","message":%q}`, err.Error())))
+		_ = conn.WriteMessage(
+			websocket.TextMessage,
+			[]byte(fmt.Sprintf(
+				`{"type":"error","code":"join_failed","message":%q}`,
+				err.Error(),
+			)),
+		)
 		_ = conn.Close()
 		return
 	}
+
 	client.Run()
 }
 
@@ -161,6 +217,7 @@ func spaHandler(root string, fs http.Handler) http.HandlerFunc {
 				return
 			}
 		}
+
 		http.ServeFile(w, r, filepath.Join(root, "index.html"))
 	}
 }
@@ -174,7 +231,10 @@ func securityHeaders(next http.Handler) http.Handler {
 }
 
 func sameOrigin(origin, host string) bool {
-	return origin == "http://"+host || origin == "https://"+host || (strings.HasPrefix(origin, "http://localhost:") && strings.HasPrefix(host, "localhost:"))
+	return origin == "http://"+host ||
+		origin == "https://"+host ||
+		(strings.HasPrefix(origin, "http://localhost:") &&
+			strings.HasPrefix(host, "localhost:"))
 }
 
 func env(key, fallback string) string {
