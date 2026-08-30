@@ -11,10 +11,10 @@ services:
     environment:
       PORT: "8080"
       CLIENT_DIST: /app/client/dist
-      ALLOW_GUESTS: ${ALLOW_GUESTS:-false}
       DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
       DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
       DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+      ALLOW_GUESTS: ${ALLOW_GUESTS:-false}
     restart: unless-stopped
     init: true
     healthcheck:

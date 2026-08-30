@@ -25,31 +25,67 @@ function randomID(): string {
 
 function isDiscordFrame(): boolean {
   const params = new URLSearchParams(window.location.search);
-  return Boolean(import.meta.env.VITE_DISCORD_CLIENT_ID) && (params.has("frame_id") || params.has("instance_id"));
+  return params.has("frame_id") || params.has("instance_id");
+}
+
+function activityError(message: string, cause: unknown): Error {
+  let detail = "";
+  if (cause instanceof Error) detail = cause.message;
+  else if (typeof cause === "string") detail = cause;
+  else if (cause && typeof cause === "object") {
+    const value = cause as { message?: unknown; code?: unknown };
+    detail = [value.message, value.code].filter((part) => typeof part === "string" || typeof part === "number").join(" · ");
+  }
+  return new Error(detail ? `${message} (${detail})` : message);
+}
+
+async function discordClientID(): Promise<string> {
+  if (import.meta.env.VITE_DISCORD_CLIENT_ID) return import.meta.env.VITE_DISCORD_CLIENT_ID;
+  const response = await fetch("/.proxy/api/config", { cache: "no-store" });
+  if (!response.ok) throw new Error("Kabo's server is missing DISCORD_CLIENT_ID.");
+  const config = (await response.json()) as { clientId?: string };
+  if (!config.clientId) throw new Error("Kabo's server returned an empty Discord Application ID.");
+  return config.clientId;
 }
 
 async function initializeDiscord(): Promise<PlatformSession> {
-  const clientId = import.meta.env.VITE_DISCORD_CLIENT_ID;
-  if (!clientId) throw new Error("VITE_DISCORD_CLIENT_ID is missing.");
+  const clientId = await discordClientID();
   const { DiscordSDK } = await import("@discord/embedded-app-sdk");
   const sdk: DiscordSDKType = new DiscordSDK(clientId);
-  await sdk.ready();
+  try {
+    await sdk.ready();
+  } catch (error) {
+    throw activityError("Discord could not connect to this Activity", error);
+  }
 
-  const { code } = await sdk.commands.authorize({
-    client_id: clientId,
-    response_type: "code",
-    state: "",
-    prompt: "none",
-    scope: ["identify", "applications.commands"],
-  });
+  let code: string;
+  try {
+    ({ code } = await sdk.commands.authorize({
+      client_id: clientId,
+      response_type: "code",
+      state: "",
+      prompt: "none",
+      scope: ["identify", "applications.commands"],
+    }));
+  } catch (error) {
+    throw activityError("Discord authorization failed. Check the OAuth2 redirect and installation settings", error);
+  }
   const response = await fetch("/.proxy/api/token", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ code, instanceId: sdk.instanceId }),
   });
-  if (!response.ok) throw new Error("Discord sign-in could not be completed.");
+  if (!response.ok) {
+    const detail = (await response.text()).trim().slice(0, 180);
+    throw new Error(`Kabo's server could not complete Discord sign-in${detail ? `: ${detail}` : ` (HTTP ${response.status})`}`);
+  }
   const token = (await response.json()) as { access_token: string; session: string };
-  const auth = await sdk.commands.authenticate({ access_token: token.access_token });
+  let auth: Awaited<ReturnType<DiscordSDKType["commands"]["authenticate"]>>;
+  try {
+    auth = await sdk.commands.authenticate({ access_token: token.access_token });
+  } catch (error) {
+    throw activityError("Discord authentication failed", error);
+  }
   if (!auth?.user) throw new Error("Discord did not return a user.");
 
   let participants: number | undefined;
@@ -105,4 +141,3 @@ export function websocketURL(session: PlatformSession): string {
   }
   return url.toString();
 }
-

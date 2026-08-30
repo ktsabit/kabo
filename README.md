@@ -1,6 +1,6 @@
-# Cambio Discord Activity MVP
+# Kabo Discord Activity MVP
 
-A playable, server-authoritative Cambio-style card game. It runs as a normal web app for local development and uses the same React client inside a Discord Activity.
+A playable, server-authoritative Kabo card game. It runs as a normal web app for local development and uses the same React client inside a Discord Activity.
 
 ## What is implemented
 
@@ -10,7 +10,7 @@ A playable, server-authoritative Cambio-style card game. It runs as a normal web
 - 7/8 own peek, 9/10 opponent peek, J/Q any-two-card swap, and K opponent peek followed by any-two-card swap.
 - Server-ordered slap races for every new discard. A stale discard event cannot win.
 - Wrong slap penalty cards and the opponent-card slap/gift flow.
-- Immediate round endings for an exhausted pile, an empty hand, or a call of Cambio.
+- Immediate round endings for an exhausted pile, an empty hand, or a call of Kabo.
 - Full scoring, including Jokers at 0 and red Kings at −1.
 - Private per-player snapshots: unrevealed card values never reach other browsers.
 - Discord OAuth code exchange, opaque game sessions, Activity `instanceId` rooms, and optional Activity Instance API validation.
@@ -63,18 +63,16 @@ Run the production image with Docker Compose:
 
 ```bash
 cp .env.example .env
-# Fill in the Discord values in .env, then set ALLOW_GUESTS=false for production.
+# Fill in the Discord values in .env on the VPS, then set ALLOW_GUESTS=false for production.
 docker compose up --build -d
 ```
 
 The app is available at `http://localhost:8080`. Stop it with `docker compose down`. The Compose setup keeps the app at one replica because rooms and sessions are stored in memory.
 
-Build the public Discord client ID into the browser bundle:
+The Activity reads the public Discord Application ID from the running server, so it does not need to be baked into the browser bundle. A direct Docker build is enough:
 
 ```bash
-docker build \
-  --build-arg VITE_DISCORD_CLIENT_ID=YOUR_DISCORD_APPLICATION_ID \
-  -t kabo .
+docker build -t kabo .
 ```
 
 Run the container with server-only secrets:
@@ -97,7 +95,7 @@ The current Go server cannot run as a normal Cloudflare Worker. Cloudflare Conta
 
 1. Create an application in the [Discord Developer Portal](https://discord.com/developers/applications), enable Activities, and keep the automatically-created **Launch** Entry Point command. Discord currently creates this command when Activities are enabled.
 2. Under Installation, enable both User Install and Guild Install. Under Activity Settings, select every platform you intend to test (desktop, web, iOS, and/or Android). Under OAuth2, add `https://127.0.0.1` as the placeholder redirect URI; the Embedded App SDK handles the Activity redirect.
-3. Copy the client ID to `client/.env.local` as `VITE_DISCORD_CLIENT_ID`. Set `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET` only on the Go server. Never expose the client secret to Vite.
+3. Put `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET` in the root `.env` beside `docker-compose.yml` on the VPS. The client obtains the public Application ID from `/api/config`; the client secret never reaches Vite or the browser.
 4. Serve the built client and Go API from the same public HTTPS origin. For development, tunnel port 8080 after building the client, or tunnel the Vite port while separately mapping the API. In **Activities → URL Mappings**, map prefix `/` to the public hostname **without** `https://`.
 5. Set `ALLOW_GUESTS=false` in production. Set `DISCORD_BOT_TOKEN` to make the backend validate the supplied instance through Discord's Activity Instance API before creating a game session.
 
@@ -107,7 +105,7 @@ The code integration is Activity-ready. Launch readiness still requires: real po
 
 Credential locations in the Developer Portal:
 
-- `VITE_DISCORD_CLIENT_ID` and `DISCORD_CLIENT_ID`: **General Information → Application ID** (also shown as the OAuth2 Client ID). This value is public.
+- `DISCORD_CLIENT_ID`: **General Information → Application ID** (also shown as the OAuth2 Client ID). This value is public.
 - `DISCORD_CLIENT_SECRET`: **OAuth2 → Client Secret**. This is private and belongs only in the host's runtime secrets.
 - `DISCORD_BOT_TOKEN`: **Bot → Token → Reset Token** if Discord is not currently showing one. This is private and belongs only in the host's runtime secrets.
 
@@ -116,7 +114,7 @@ Discord Activities route network traffic through their proxy. WebSockets are sup
 ## MVP rule decisions
 
 - A special power triggers only when the drawn special card is discarded. Replacing one of your cards with it does not trigger the power.
-- Calling Cambio is allowed at the start of your own turn and ends the round immediately.
+- Calling Kabo is allowed at the start of your own turn and ends the round immediately.
 - K's peek and swap are both mandatory; the peeked card may be one side of the swap.
 - J/Q/K swaps require two different occupied slots, but both slots may belong to the same player.
 - A successful slap creates a new discard event, allowing same-rank slap chains. If it targets an opponent, that gift is resolved before the next slap in the chain.

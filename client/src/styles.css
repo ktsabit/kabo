@@ -34,6 +34,7 @@ button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 .brand { display: flex; align-items: center; gap: 10px; font-family: Georgia, serif; font-size: 20px; letter-spacing: -.02em; }
 .brand-mark { width: 64px; height: 64px; display: grid; place-items: center; border: 1px solid rgba(245, 246, 255, .35); border-radius: 18px; background: linear-gradient(145deg, #3e48ca, #20267f); box-shadow: inset 0 0 0 4px #171b62, 0 20px 55px rgba(0,0,0,.3); font-family: Georgia, serif; font-size: 32px; color: white; }
 .brand-mark.small { width: 34px; height: 34px; border-radius: 10px; font-size: 17px; box-shadow: inset 0 0 0 2px #171b62; }
+.bear-logo { background-color: #3039b9; background-image: url("/card-back.jpg"); background-position: center; background-repeat: no-repeat; background-size: cover; border-color: rgba(255,255,255,.82); box-shadow: 0 20px 55px rgba(0,0,0,.3), 0 0 30px rgba(89,100,228,.28); }
 .room-chip { padding: 7px 12px; border: 1px solid rgba(245,246,255,.12); border-radius: 999px; color: var(--muted); font-size: 12px; letter-spacing: .04em; }
 .room-chip b { color: var(--cream); }
 .ghost-button { border: 1px solid rgba(245,246,255,.18); color: var(--cream); background: transparent; border-radius: 999px; padding: 9px 15px; cursor: pointer; }

@@ -52,6 +52,15 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
+	mux.HandleFunc("/api/config", func(w http.ResponseWriter, _ *http.Request) {
+		if s.discord.ClientID == "" {
+			http.Error(w, "Discord Application ID is not configured", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.NewEncoder(w).Encode(map[string]string{"clientId": s.discord.ClientID})
+	})
 	mux.HandleFunc("/api/token", s.handleToken)
 	mux.HandleFunc("/ws", s.handleWebSocket)
 
@@ -61,7 +70,7 @@ func main() {
 		mux.HandleFunc("/", spaHandler(clientDist, fs))
 	}
 
-	log.Printf("Cambio server listening on :%s", port)
+	log.Printf("Kabo server listening on :%s", port)
 	if err := http.ListenAndServe(":"+port, securityHeaders(mux)); err != nil {
 		log.Fatal(err)
 	}

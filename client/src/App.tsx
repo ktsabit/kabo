@@ -27,7 +27,8 @@ function App() {
 
   useEffect(() => {
     initializePlatform().then(setPlatform).catch((error: unknown) => {
-      setProblem(error instanceof Error ? error.message : "Could not initialize the game.");
+      console.error("Kabo Activity initialization failed", error);
+      setProblem(readableError(error));
       setConnection("closed");
     });
   }, []);
@@ -172,8 +173,8 @@ function App() {
   if (!platform || !snapshot) {
     return (
       <main className="loading-screen">
-        <div className="brand-mark">C</div>
-        <h1>Cambio</h1>
+        <div className="brand-mark bear-logo" role="img" aria-label="Kabo bear" />
+        <h1>Kabo</h1>
         <p>{problem ?? "Pulling up a seat…"}</p>
         <span className={`connection-dot ${connection}`} />
       </main>
@@ -557,10 +558,21 @@ function hash(value: string) {
 }
 
 function endReason(reason?: string) {
-  if (reason === "called_end") return "Someone called Cambio.";
+  if (reason === "called_end") return "Someone called Kabo.";
   if (reason === "player_has_zero_cards") return "A player cleared every card.";
   if (reason === "draw_pile_exhausted") return "The draw pile ran out.";
   return "The table has settled.";
 }
 
 export default App;
+
+function readableError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object") {
+    const value = error as { message?: unknown; code?: unknown };
+    const detail = [value.message, value.code].filter((part) => typeof part === "string" || typeof part === "number").join(" · ");
+    if (detail) return `Kabo could not start: ${detail}`;
+  }
+  return "Kabo could not start inside Discord. Check the Activity configuration and try again.";
+}
