@@ -1,4 +1,4 @@
-module cambio-activity/server
+module kabo/server
 
 go 1.24
 

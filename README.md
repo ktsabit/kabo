@@ -74,7 +74,7 @@ Build the public Discord client ID into the browser bundle:
 ```bash
 docker build \
   --build-arg VITE_DISCORD_CLIENT_ID=YOUR_DISCORD_APPLICATION_ID \
-  -t cambio-activity .
+  -t kabo .
 ```
 
 Run the container with server-only secrets:
@@ -84,7 +84,7 @@ docker run --rm -p 8080:8080 \
   -e DISCORD_CLIENT_ID=YOUR_DISCORD_APPLICATION_ID \
   -e DISCORD_CLIENT_SECRET=YOUR_DISCORD_CLIENT_SECRET \
   -e DISCORD_BOT_TOKEN=YOUR_DISCORD_BOT_TOKEN \
-  cambio-activity
+  kabo
 ```
 
 Choose a Docker host that provides a public HTTPS domain, forwards WebSocket upgrades, keeps one process alive, and sends traffic to port 8080. Keep this MVP at exactly **one replica** with no scale-to-zero: rooms and sessions are in memory, so restarts erase them and multiple replicas would split players unless Redis or a durable room service is added first.

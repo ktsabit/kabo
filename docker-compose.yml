@@ -1,6 +1,6 @@
 services:
   cambio:
-    image: cambio-activity:latest
+    image: kabo:latest
     build:
       context: .
       dockerfile: Dockerfile

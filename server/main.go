@@ -12,8 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"cambio-activity/server/auth"
-	"cambio-activity/server/transport"
+	"kabo/server/auth"
+	"kabo/server/transport"
+
 	"github.com/gorilla/websocket"
 )
 

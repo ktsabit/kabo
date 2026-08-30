@@ -6,7 +6,8 @@ import (
 	"math/rand"
 	"sync"
 
-	"cambio-activity/server/game"
+	"kabo/server/game"
+
 	"github.com/gorilla/websocket"
 )
 
