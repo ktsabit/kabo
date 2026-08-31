@@ -560,24 +560,31 @@ func (g *Game) slap(playerID string, eventID int, target CardRef) error {
 	if g.Phase == PhaseLobby || g.Phase == PhaseInitialPeek || g.Phase == PhaseEnded {
 		return errors.New("slaps are not open")
 	}
+	if len(g.Discard) == 0 || eventID != g.DiscardEventID {
+		var card *Card
+		if targetPlayer := g.player(target.PlayerID); targetPlayer != nil {
+			card, _ = occupiedCard(targetPlayer, target.Slot)
+		}
+		if card == nil && g.Action != nil && g.Action.Kind == "slap" && g.Action.Target != nil && *g.Action.Target == target {
+			card = g.Action.Card
+		}
+		return g.wrongSlap(playerID, target, card, "that discard is no longer available")
+	}
 	if g.Phase == PhaseAwaitGift {
 		return errors.New("the previous slap gift must be resolved first")
-	}
-	if len(g.Discard) == 0 || eventID != g.DiscardEventID {
-		return errors.New("that discard is no longer available")
 	}
 	targetPlayer := g.player(target.PlayerID)
 	card, err := occupiedCard(targetPlayer, target.Slot)
 	if err != nil {
-		return g.wrongSlap(playerID, "that slot is empty")
+		return g.wrongSlap(playerID, target, nil, "that slot is empty")
 	}
 	top := g.Discard[len(g.Discard)-1]
 	if card.Rank != top.Rank {
-		return g.wrongSlap(playerID, "ranks do not match")
+		return g.wrongSlap(playerID, target, card, "ranks do not match")
 	}
 	targetPlayer.Cards[target.Slot] = nil
 	g.openDiscard(card)
-	g.recordAction("slap", playerID, nil, nil, &target)
+	g.recordActionWithCard("slap", playerID, nil, nil, &target, card)
 	if target.PlayerID != playerID {
 		g.Gift = &pendingGift{SlapperID: playerID, Target: target, Resume: g.Phase}
 		g.Phase = PhaseAwaitGift
@@ -589,11 +596,12 @@ func (g *Game) slap(playerID string, eventID int, target CardRef) error {
 	return nil
 }
 
-func (g *Game) wrongSlap(playerID, reason string) error {
+func (g *Game) wrongSlap(playerID string, target CardRef, card *Card, reason string) error {
+	g.recordActionWithCard("wrong_slap", playerID, nil, nil, &target, card)
 	p := g.player(playerID)
-	card, ok := g.takeDeckCard()
+	penaltyCard, ok := g.takeDeckCard()
 	if ok {
-		p.Cards = append(p.Cards, card)
+		p.Cards = append(p.Cards, penaltyCard)
 	}
 	if !ok {
 		g.end("draw_pile_exhausted")
@@ -696,8 +704,17 @@ func (e actionError) Error() string     { return e.message }
 func (e actionError) ErrorCode() string { return e.code }
 
 func (g *Game) recordAction(kind, actorID string, first, second, target *CardRef) {
+	g.recordActionWithCard(kind, actorID, first, second, target, nil)
+}
+
+func (g *Game) recordActionWithCard(kind, actorID string, first, second, target *CardRef, card *Card) {
 	g.ActionEventID++
-	g.Action = &ActionView{ID: g.ActionEventID, Kind: kind, ActorID: actorID, First: first, Second: second, Target: target}
+	action := &ActionView{ID: g.ActionEventID, Kind: kind, ActorID: actorID, First: first, Second: second, Target: target}
+	if card != nil {
+		value := *card
+		action.Card = &value
+	}
+	g.Action = action
 }
 
 func (g *Game) View(viewerID string) Snapshot {

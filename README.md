@@ -8,7 +8,7 @@ A playable, server-authoritative Kabo card game. It runs as a normal web app for
 - Four face-down cards per player, arranged 2×2; each player privately sees their bottom two once.
 - Draw, replace, or discard turns.
 - 7/8 own peek, 9/10 opponent peek, J/Q any-two-card swap, and K opponent peek followed by any-two-card swap.
-- Server-ordered slap races for every new discard. A stale discard event cannot win.
+- Server-ordered slap races for every new discard. The first valid slap wins; later stale or incorrect slaps add a penalty and show the card briefly to everyone.
 - Wrong slap penalty cards and the opponent-card slap/gift flow.
 - Immediate round endings for an exhausted pile, an empty hand, or a call of Kabo.
 - Full scoring, including Jokers at 0 and red Kings at −1.

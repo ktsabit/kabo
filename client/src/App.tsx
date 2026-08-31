@@ -1,4 +1,5 @@
 import { Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { createRoot } from "react-dom/client";
 import type {
   ActionView,
   Card,
@@ -22,7 +23,6 @@ function App() {
   const [problem, setProblem] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [swapSelection, setSwapSelection] = useState<CardRef[]>([]);
-  const [wrongSlapTick, setWrongSlapTick] = useState(0);
   const socket = useRef<WebSocket | undefined>(undefined);
   const lastActionID = useRef(0);
 
@@ -57,10 +57,7 @@ function App() {
           return;
         }
         if (message.type === "error") {
-          if (message.code === "wrong_slap") {
-            setWrongSlapTick((tick) => tick + 1);
-            return;
-          }
+          if (message.code === "wrong_slap") return;
           setProblem(message.message);
           window.setTimeout(() => setProblem(undefined), 3200);
         } else {
@@ -253,7 +250,7 @@ function App() {
 
             {me && (
               <div className="my-area">
-                <PlayerArea player={me} snapshot={snapshot} selected={swapSelection} onCard={cardAction} onSlap={slap} onGift={(slot) => send({ type: "gift", sourceSlot: slot })} onInitialDone={() => send({ type: "acknowledge_initial" })} wrongSlapTick={wrongSlapTick} mine canInteract />
+                <PlayerArea player={me} snapshot={snapshot} selected={swapSelection} onCard={cardAction} onSlap={slap} onGift={(slot) => send({ type: "gift", sourceSlot: slot })} onInitialDone={() => send({ type: "acknowledge_initial" })} mine canInteract />
                 {isMyTurn && snapshot.phase === "await_draw" && (
                   <button className="kabo-button" onClick={() => send({ type: "call_end" })}>KABO!</button>
                 )}
@@ -383,7 +380,7 @@ function RoundSummary({ snapshot, winners, send, canStart }: { snapshot: Snapsho
   );
 }
 
-function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInitialDone, wrongSlapTick = 0, style, mine = false, canInteract = true }: {
+function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInitialDone, style, mine = false, canInteract = true }: {
   player: PlayerView;
   snapshot: SnapshotMessage;
   selected: CardRef[];
@@ -391,7 +388,6 @@ function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInit
   onSlap: (target: CardRef) => void;
   onGift: (slot: number) => void;
   onInitialDone: () => void;
-  wrongSlapTick?: number;
   style?: CSSProperties;
   mine?: boolean;
   canInteract?: boolean;
@@ -407,18 +403,6 @@ function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInit
   useEffect(() => () => {
     if (tap.current?.timer) window.clearTimeout(tap.current.timer);
   }, []);
-
-  useEffect(() => {
-    if (!mine || wrongSlapTick === 0 || !area.current) return;
-    area.current.animate([
-      { transform: "translateX(0)", filter: "drop-shadow(0 0 0 rgba(255,75,75,0))" },
-      { transform: "translateX(-9px) rotate(-1deg)", filter: "drop-shadow(0 0 24px rgba(255,75,75,.95))", background: "rgba(255,75,75,.18)" },
-      { transform: "translateX(8px) rotate(1deg)", filter: "drop-shadow(0 0 30px rgba(255,75,75,.9))", background: "rgba(255,75,75,.22)" },
-      { transform: "translateX(-6px)", filter: "drop-shadow(0 0 18px rgba(255,75,75,.65))" },
-      { transform: "translateX(4px)" },
-      { transform: "translateX(0)", filter: "drop-shadow(0 0 0 rgba(255,75,75,0))", background: "transparent" },
-    ], { duration: 620, easing: "ease-out" });
-  }, [mine, wrongSlapTick]);
 
   const handleTap = (target: CardRef) => {
     if (dragging.current || !canInteract) return;
@@ -442,7 +426,7 @@ function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInit
   const initialRevealHere = mine && snapshot.reveal?.kind === "initial";
   const winner = snapshot.phase === "ended" && snapshot.winnerIds?.includes(player.id);
   return (
-    <section ref={area} style={style} className={`player-area ${mine ? "mine" : ""} ${active ? "active" : ""} ${winner ? "winner" : ""} ${snapshot.phase === "ended" ? "cards-revealed" : ""} ${snapshot.phase === "await_choice" && mine ? "replace-mode" : ""}`}>
+    <section ref={area} data-player-id={player.id} style={style} className={`player-area ${mine ? "mine" : ""} ${active ? "active" : ""} ${winner ? "winner" : ""} ${snapshot.phase === "ended" ? "cards-revealed" : ""} ${snapshot.phase === "await_choice" && mine ? "replace-mode" : ""}`}>
       <div className="player-heading">
         <span className={`avatar avatar-${hash(player.id) % 5}`}>{player.name.slice(0, 1).toUpperCase()}</span>
         <div><b>{mine ? "You" : player.name}</b>{snapshot.phase === "ended" ? <small>{player.score} pts</small> : !player.connected && <small>Disconnected</small>}</div>
@@ -561,6 +545,7 @@ function uSeatStyle(index: number, total: number): CSSProperties {
 }
 
 function animateAction(action: ActionView) {
+  if (action.kind === "wrong_slap") animateWrongSlap(action);
   if (action.kind === "swap" && action.first && action.second) animateSwap(action.first, action.second);
   if (action.kind === "replace" && action.target) animateReplace(action.target);
   if (action.kind === "discard") animateDiscard();
@@ -616,6 +601,73 @@ function animateSlap(target: CardRef) {
   if (!source || !discardCard) return;
   const land = concealUntilLanding(discardCard);
   flyCard(discardCard, source.getBoundingClientRect(), discardCard.getBoundingClientRect(), -38, 0, 680, land);
+}
+
+function animateWrongSlap(action: ActionView) {
+  if (!action.target || !action.card) {
+    animateWrongSlapShake(action.actorId);
+    return;
+  }
+  const source = slotFor(action.target);
+  const discard = document.querySelector<HTMLElement>(".discard-wrap");
+  if (!source || !discard) {
+    animateWrongSlapShake(action.actorId);
+    return;
+  }
+
+  const sourceCard = source.querySelector<HTMLElement>(".playing-card, .card-back, .empty-slot");
+  const from = (sourceCard ?? source).getBoundingClientRect();
+  const discardRect = discard.getBoundingClientRect();
+  const width = from.width || 70;
+  const height = from.height || width * 1.4;
+  const rightSide = discardRect.right + 12;
+  const leftSide = discardRect.left - width - 12;
+  const finalLeft = rightSide + width <= window.innerWidth - 8
+    ? rightSide
+    : leftSide >= 8
+      ? leftSide
+      : Math.min(window.innerWidth - width - 8, discardRect.left + 14);
+  const finalTop = Math.max(8, Math.min(window.innerHeight - height - 8, discardRect.top + 10));
+  const ghost = document.createElement("div");
+  ghost.className = "wrong-slap-flight";
+  Object.assign(ghost.style, {
+    left: `${from.left}px`,
+    top: `${from.top}px`,
+    width: `${width}px`,
+    height: `${height}px`,
+    visibility: "visible",
+  });
+  document.body.appendChild(ghost);
+  const root = createRoot(ghost);
+  root.render(<PlayingCard card={action.card} compact />);
+
+  const dx = finalLeft - from.left;
+  const dy = finalTop - from.top;
+  const animation = ghost.animate([
+    { transform: "translate3d(0,0,0) rotate(0deg) scale(.88)", opacity: 0 },
+    { transform: `translate3d(${dx * .45}px, ${dy * .45 - 28}px, 0) rotate(-7deg) scale(1.04)`, opacity: 1, offset: .46 },
+    { transform: `translate3d(${dx}px, ${dy}px, 0) rotate(-9deg) scale(.9)`, opacity: .92 },
+  ], { duration: 720, easing: "cubic-bezier(.2,.78,.2,1)", fill: "both" });
+  const finish = (shake: boolean) => {
+    root.unmount();
+    ghost.remove();
+    if (shake) animateWrongSlapShake(action.actorId);
+  };
+  animation.addEventListener("finish", () => finish(true), { once: true });
+  animation.addEventListener("cancel", () => finish(false), { once: true });
+}
+
+function animateWrongSlapShake(playerID: string) {
+  const area = [...document.querySelectorAll<HTMLElement>(".player-area")].find((item) => item.dataset.playerId === playerID);
+  if (!area) return;
+  area.animate([
+    { transform: "translateX(0)", filter: "drop-shadow(0 0 0 rgba(255,75,75,0))" },
+    { transform: "translateX(-9px) rotate(-1deg)", filter: "drop-shadow(0 0 24px rgba(255,75,75,.95))", background: "rgba(255,75,75,.18)" },
+    { transform: "translateX(8px) rotate(1deg)", filter: "drop-shadow(0 0 30px rgba(255,75,75,.9))", background: "rgba(255,75,75,.22)" },
+    { transform: "translateX(-6px)", filter: "drop-shadow(0 0 18px rgba(255,75,75,.65))" },
+    { transform: "translateX(4px)" },
+    { transform: "translateX(0)", filter: "drop-shadow(0 0 0 rgba(255,75,75,0))", background: "transparent" },
+  ], { duration: 620, easing: "ease-out" });
 }
 
 function animateGift(source: CardRef, target: CardRef) {

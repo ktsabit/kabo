@@ -143,6 +143,8 @@ button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 .drawn-card-position { min-width: 60px; min-height: 82px; display: flex; justify-content: center; align-items: flex-start; }
 .drawn-card-zone { display: flex; flex-direction: column; align-items: center; gap: 5px; animation: draw-to-table .34s cubic-bezier(.2,.8,.2,1); }
 .action-card-ghost { animation: none !important; transition: none !important; filter: drop-shadow(0 14px 22px rgba(0,0,0,.42)); }
+.wrong-slap-flight { position: fixed; z-index: 100; pointer-events: none; visibility: hidden; filter: drop-shadow(0 12px 22px rgba(255,75,75,.42)); }
+.wrong-slap-flight .playing-card { width: 100%; height: 100%; }
 .discard-action { min-height: 20px; padding: 2px 4px; border: 0; border-radius: 0; color: var(--orange); background: transparent; font-family: var(--card-display); font-size: 10px; font-weight: 900; letter-spacing: .06em; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; cursor: pointer; }
 .discard-action:hover { color: #ff9b93; transform: rotate(-1deg) scale(1.04); }
 @keyframes draw-to-table { from { transform: translateX(-72px) rotate(-7deg); opacity: 0; } }

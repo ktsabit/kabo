@@ -174,6 +174,10 @@ func TestSlapPenaltyAndOpponentGift(t *testing.T) {
 	if coded, ok := wrong.(interface{ ErrorCode() string }); !ok || coded.ErrorCode() != "wrong_slap" {
 		t.Fatalf("wrong slap should return its private error code: %T %v", wrong, wrong)
 	}
+	wrongAction := g.View("a").Action
+	if wrongAction == nil || wrongAction.Kind != "wrong_slap" || wrongAction.Card == nil || wrongAction.Card.ID != "not-a-five" {
+		t.Fatalf("wrong slap should broadcast the revealed card: %+v", wrongAction)
+	}
 
 	target := g.player("a")
 	target.Cards[0] = &Card{ID: "matching-five", Rank: 5, Suit: Hearts}
@@ -192,6 +196,33 @@ func TestSlapPenaltyAndOpponentGift(t *testing.T) {
 	}
 	if target.Cards[0] != giftCard || g.player("b").Cards[0] != nil {
 		t.Fatal("gift did not move the slapper card into the opponent slot")
+	}
+}
+
+func TestLateSlapIsPenalizedAndRevealsTheAcceptedCard(t *testing.T) {
+	g := startedGame(t)
+	five := Card{ID: "late-five", Rank: 5, Suit: Hearts}
+	g.Discard = []Card{{ID: "discard-five", Rank: 5, Suit: Clubs}}
+	g.DiscardEventID = 4
+	g.player("a").Cards[0] = &five
+
+	if err := g.Apply("b", ClientMessage{Type: "slap", EventID: 4, Target: CardRef{PlayerID: "a", Slot: 0}}); err != nil {
+		t.Fatal(err)
+	}
+	before := countCards(g.player("a"))
+	late := g.Apply("a", ClientMessage{Type: "slap", EventID: 4, Target: CardRef{PlayerID: "a", Slot: 0}})
+	if late == nil {
+		t.Fatal("a stale slap should be penalized")
+	}
+	if coded, ok := late.(interface{ ErrorCode() string }); !ok || coded.ErrorCode() != "wrong_slap" {
+		t.Fatalf("late slap should use the wrong-slap error code: %T %v", late, late)
+	}
+	if countCards(g.player("a")) != before+1 {
+		t.Fatal("late slap should add a penalty card")
+	}
+	action := g.View("b").Action
+	if action == nil || action.Kind != "wrong_slap" || action.ActorID != "a" || action.Card == nil || action.Card.ID != five.ID {
+		t.Fatalf("late slap should broadcast the accepted card: %+v", action)
 	}
 }
 

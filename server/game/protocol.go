@@ -85,6 +85,7 @@ type ActionView struct {
 	First   *CardRef `json:"first,omitempty"`
 	Second  *CardRef `json:"second,omitempty"`
 	Target  *CardRef `json:"target,omitempty"`
+	Card    *Card    `json:"card,omitempty"`
 }
 
 type Snapshot struct {
