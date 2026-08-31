@@ -223,6 +223,93 @@ func TestEndedRoundRevealsEveryRemainingCard(t *testing.T) {
 	}
 }
 
+func TestMidRoundJoinBecomesSpectatorAndCanJoinNextRound(t *testing.T) {
+	g := startedGame(t)
+	if _, err := g.AddOrReconnect("c", "Cleo"); err != nil {
+		t.Fatal(err)
+	}
+
+	view := g.View("c")
+	if view.You.ID != "c" || view.YouRole != MembershipSpectator {
+		t.Fatalf("mid-round join should be a spectator: %+v", view)
+	}
+	if !view.NextRoundJoined || len(view.NextRoundPlayers) != 3 {
+		t.Fatalf("spectator should be queued for the next round: %+v", view)
+	}
+	if len(view.Players) != 2 || view.Reveal != nil {
+		t.Fatalf("spectator should see the active board without private reveals: %+v", view)
+	}
+	if err := g.Apply("c", ClientMessage{Type: "set_next_round", JoinNextRound: false}); err != nil {
+		t.Fatal(err)
+	}
+	if view := g.View("c"); view.NextRoundJoined || len(view.NextRoundPlayers) != 2 {
+		t.Fatalf("spectator should be able to leave the next-round roster: %+v", view)
+	}
+	if err := g.Apply("c", ClientMessage{Type: "draw"}); err == nil {
+		t.Fatal("spectator should not be allowed to act in the current round")
+	}
+}
+
+func TestWaitingPlayersPromoteIntoNextRound(t *testing.T) {
+	g := startedGame(t)
+	if _, err := g.AddOrReconnect("c", "Cleo"); err != nil {
+		t.Fatal(err)
+	}
+	g.end("called_end")
+
+	if err := g.Apply("a", ClientMessage{Type: "start_game"}); err != nil {
+		t.Fatal(err)
+	}
+	if g.Phase != PhaseInitialPeek || len(g.Players) != 3 || g.player("c") == nil {
+		t.Fatalf("queued player was not promoted: phase=%s players=%d", g.Phase, len(g.Players))
+	}
+	if g.waitingPlayer("c") != nil {
+		t.Fatal("promoted player should leave the waiting roster")
+	}
+	if view := g.View("c"); view.YouRole != MembershipActive || view.Reveal == nil {
+		t.Fatalf("promoted player should receive the new hand and reveal: %+v", view)
+	}
+}
+
+func TestOptedOutActivePlayerBecomesSpectatorAfterRound(t *testing.T) {
+	g := startedGame(t)
+	if _, err := g.AddOrReconnect("c", "Cleo"); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Apply("a", ClientMessage{Type: "set_next_round", JoinNextRound: false}); err != nil {
+		t.Fatal(err)
+	}
+	g.end("called_end")
+	if err := g.Apply("b", ClientMessage{Type: "start_game"}); err != nil {
+		t.Fatal(err)
+	}
+	if g.player("a") != nil || g.waitingPlayer("a") == nil {
+		t.Fatal("an opted-out player should become a spectator for the next round")
+	}
+	if view := g.View("a"); view.YouRole != MembershipSpectator || view.NextRoundJoined {
+		t.Fatalf("opted-out player should remain a spectator: %+v", view)
+	}
+}
+
+func TestNextRoundRosterIsCappedAtEight(t *testing.T) {
+	g := New("room", rand.New(rand.NewSource(12)))
+	for i := 0; i < MaxPlayers; i++ {
+		if _, err := g.AddOrReconnect(string(rune('a'+i)), "Player"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := g.AddOrReconnect("extra", "Extra"); err != nil {
+		t.Fatal(err)
+	}
+	view := g.View("extra")
+	if view.NextRoundJoined || !view.NextRoundFull || len(view.NextRoundPlayers) != MaxPlayers {
+		t.Fatalf("extra player should remain a spectator when roster is full: %+v", view)
+	}
+	if err := g.Apply("extra", ClientMessage{Type: "set_next_round", JoinNextRound: true}); err == nil {
+		t.Fatal("full next-round roster should reject another player")
+	}
+}
+
 func startedGame(t *testing.T) *Game {
 	t.Helper()
 	g := New("room", rand.New(rand.NewSource(11)))

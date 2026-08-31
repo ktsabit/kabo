@@ -24,13 +24,14 @@ type CardRef struct {
 }
 
 type ClientMessage struct {
-	Type       string  `json:"type"`
-	Slot       int     `json:"slot"`
-	Target     CardRef `json:"target"`
-	First      CardRef `json:"first"`
-	Second     CardRef `json:"second"`
-	EventID    int     `json:"eventId"`
-	SourceSlot int     `json:"sourceSlot"`
+	Type          string  `json:"type"`
+	Slot          int     `json:"slot"`
+	Target        CardRef `json:"target"`
+	First         CardRef `json:"first"`
+	Second        CardRef `json:"second"`
+	EventID       int     `json:"eventId"`
+	SourceSlot    int     `json:"sourceSlot"`
+	JoinNextRound bool    `json:"joinNextRound"`
 }
 
 type CardSlotView struct {
@@ -46,6 +47,13 @@ type PlayerView struct {
 	Cards        []CardSlotView `json:"cards"`
 	InitialReady *bool          `json:"initialReady,omitempty"`
 	Score        *int           `json:"score,omitempty"`
+}
+
+type RosterPlayerView struct {
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Connected        bool   `json:"connected"`
+	JoiningNextRound bool   `json:"joiningNextRound"`
 }
 
 type RevealCard struct {
@@ -78,23 +86,28 @@ type ActionView struct {
 }
 
 type Snapshot struct {
-	Type            string          `json:"type"`
-	RoomID          string          `json:"roomId"`
-	You             Identity        `json:"you"`
-	Phase           Phase           `json:"phase"`
-	CurrentPlayerID string          `json:"currentPlayerId,omitempty"`
-	Players         []PlayerView    `json:"players"`
-	DrawPileCount   int             `json:"drawPileCount"`
-	HasDrawnCard    bool            `json:"hasDrawnCard"`
-	DiscardTop      *Card           `json:"discardTop,omitempty"`
-	DiscardEventID  int             `json:"discardEventId,omitempty"`
-	DrawnCard       *Card           `json:"drawnCard,omitempty"`
-	Reveal          *RevealView     `json:"reveal,omitempty"`
-	PublicPeek      *PublicPeekView `json:"publicPeek,omitempty"`
-	Action          *ActionView     `json:"action,omitempty"`
-	PendingGift     *GiftView       `json:"pendingGift,omitempty"`
-	EndReason       string          `json:"endReason,omitempty"`
-	WinnerIDs       []string        `json:"winnerIds,omitempty"`
+	Type             string             `json:"type"`
+	RoomID           string             `json:"roomId"`
+	You              Identity           `json:"you"`
+	YouRole          string             `json:"youRole"`
+	NextRoundJoined  bool               `json:"nextRoundJoined"`
+	NextRoundFull    bool               `json:"nextRoundFull"`
+	NextRoundPlayers []RosterPlayerView `json:"nextRoundPlayers"`
+	WaitingPlayers   []RosterPlayerView `json:"waitingPlayers"`
+	Phase            Phase              `json:"phase"`
+	CurrentPlayerID  string             `json:"currentPlayerId,omitempty"`
+	Players          []PlayerView       `json:"players"`
+	DrawPileCount    int                `json:"drawPileCount"`
+	HasDrawnCard     bool               `json:"hasDrawnCard"`
+	DiscardTop       *Card              `json:"discardTop,omitempty"`
+	DiscardEventID   int                `json:"discardEventId,omitempty"`
+	DrawnCard        *Card              `json:"drawnCard,omitempty"`
+	Reveal           *RevealView        `json:"reveal,omitempty"`
+	PublicPeek       *PublicPeekView    `json:"publicPeek,omitempty"`
+	Action           *ActionView        `json:"action,omitempty"`
+	PendingGift      *GiftView          `json:"pendingGift,omitempty"`
+	EndReason        string             `json:"endReason,omitempty"`
+	WinnerIDs        []string           `json:"winnerIds,omitempty"`
 }
 
 type Identity struct {

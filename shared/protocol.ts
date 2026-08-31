@@ -41,6 +41,13 @@ export interface PlayerView {
   score?: number;
 }
 
+export interface RosterPlayerView {
+  id: string;
+  name: string;
+  connected: boolean;
+  joiningNextRound: boolean;
+}
+
 export interface RevealView {
   kind: "initial" | "self" | "opponent" | "king";
   cards: Array<{ target: CardRef; card: Card }>;
@@ -69,6 +76,11 @@ export interface SnapshotMessage {
   type: "snapshot";
   roomId: string;
   you: { id: string; name: string };
+  youRole: "active" | "spectator";
+  nextRoundJoined: boolean;
+  nextRoundFull: boolean;
+  nextRoundPlayers: RosterPlayerView[];
+  waitingPlayers: RosterPlayerView[];
   phase: GamePhase;
   currentPlayerId?: string;
   players: PlayerView[];
@@ -100,6 +112,7 @@ export type ServerMessage = SnapshotMessage | ErrorMessage | NoticeMessage;
 
 export type ClientMessage =
   | { type: "start_game" }
+  | { type: "set_next_round"; joinNextRound: boolean }
   | { type: "acknowledge_initial" }
   | { type: "draw" }
   | { type: "replace"; slot: number }

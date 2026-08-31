@@ -26,11 +26,26 @@ const (
 	PhaseEnded             Phase = "ended"
 )
 
+const MaxPlayers = 8
+
+const (
+	MembershipActive    = "active"
+	MembershipSpectator = "spectator"
+)
+
 type Player struct {
-	ID        string
-	Name      string
-	Connected bool
-	Cards     []*Card
+	ID               string
+	Name             string
+	Connected        bool
+	JoiningNextRound bool
+	Cards            []*Card
+}
+
+type WaitingPlayer struct {
+	ID               string
+	Name             string
+	Connected        bool
+	JoiningNextRound bool
 }
 
 type privateReveal struct {
@@ -50,6 +65,7 @@ type Game struct {
 
 	ID             string
 	Players        []*Player
+	Waiting        []*WaitingPlayer
 	Phase          Phase
 	Current        int
 	Deck           []Card
@@ -87,29 +103,61 @@ func (g *Game) AddOrReconnect(id, name string) (*Player, error) {
 			return p, nil
 		}
 	}
-	if g.Phase != PhaseLobby {
-		return nil, errors.New("this round has already started")
-	}
-	if len(g.Players) >= 8 {
-		return nil, errors.New("room is full")
+	for _, p := range g.Waiting {
+		if p.ID == id {
+			p.Connected = true
+			if name != "" {
+				p.Name = name
+			}
+			return nil, nil
+		}
 	}
 	if name == "" {
 		name = "Player"
 	}
-	p := &Player{ID: id, Name: name, Connected: true}
-	g.Players = append(g.Players, p)
-	return p, nil
+	if g.Phase == PhaseLobby && len(g.Players) < MaxPlayers {
+		p := &Player{ID: id, Name: name, Connected: true, JoiningNextRound: true}
+		g.Players = append(g.Players, p)
+		return p, nil
+	}
+
+	p := &WaitingPlayer{
+		ID:               id,
+		Name:             name,
+		Connected:        true,
+		JoiningNextRound: g.nextRoundCount() < MaxPlayers,
+	}
+	g.Waiting = append(g.Waiting, p)
+	return nil, nil
 }
 
 func (g *Game) Disconnect(id string) {
 	if p := g.player(id); p != nil {
 		p.Connected = false
+		if g.Phase == PhaseEnded {
+			p.JoiningNextRound = false
+		}
+		return
+	}
+	if p := g.waitingPlayer(id); p != nil {
+		p.Connected = false
+		if g.Phase == PhaseEnded {
+			p.JoiningNextRound = false
+		}
 	}
 }
 
 func (g *Game) Apply(playerID string, msg ClientMessage) error {
-	if g.player(playerID) == nil {
+	active := g.player(playerID)
+	waiting := g.waitingPlayer(playerID)
+	if active == nil && waiting == nil {
 		return errors.New("player is not in this room")
+	}
+	if msg.Type == "set_next_round" {
+		return g.setNextRound(playerID, msg.JoinNextRound)
+	}
+	if active == nil {
+		return errors.New("spectators cannot perform game actions")
 	}
 	if g.Phase == PhaseEnded && msg.Type != "start_game" {
 		return errors.New("the round has ended")
@@ -144,29 +192,21 @@ func (g *Game) Apply(playerID string, msg ClientMessage) error {
 }
 
 func (g *Game) start() error {
-	if g.Phase == PhaseEnded {
-		for _, p := range g.Players {
-			p.Cards = nil
-		}
-		g.Phase = PhaseLobby
-		g.Deck = nil
-		g.Discard = nil
-		g.Drawn = nil
-		g.DiscardEventID = 0
-		g.ActionEventID = 0
-		g.Reveal = nil
-		g.Action = nil
-		g.Gift = nil
-		g.ActorID = ""
-		g.EndReason = ""
-		g.WinnerIDs = nil
-	}
-	if g.Phase != PhaseLobby {
+	if g.Phase != PhaseLobby && g.Phase != PhaseEnded {
 		return errors.New("game is already started")
 	}
+	if g.nextRoundConnectedCount() < 2 {
+		return errors.New("at least two players must join the next round")
+	}
+	if g.Phase == PhaseEnded {
+		g.Phase = PhaseLobby
+		g.resetRoundState()
+	}
+	g.prepareNextRound()
 	connected := g.Players[:0]
 	for _, p := range g.Players {
 		if p.Connected {
+			p.Cards = nil
 			connected = append(connected, p)
 		}
 	}
@@ -192,6 +232,123 @@ func (g *Game) start() error {
 	g.Current = 0
 	g.Phase = PhaseInitialPeek
 	return nil
+}
+
+func (g *Game) resetRoundState() {
+	g.Deck = nil
+	g.Discard = nil
+	g.Drawn = nil
+	g.DiscardEventID = 0
+	g.ActionEventID = 0
+	g.InitialPending = map[string]bool{}
+	g.Reveal = nil
+	g.Action = nil
+	g.Gift = nil
+	g.ActorID = ""
+	g.EndReason = ""
+	g.WinnerIDs = nil
+}
+
+func (g *Game) prepareNextRound() {
+	selected := make([]*Player, 0, MaxPlayers)
+	for _, p := range g.Players {
+		if p.Connected && p.JoiningNextRound && len(selected) < MaxPlayers {
+			p.Cards = nil
+			selected = append(selected, p)
+		}
+	}
+
+	waiting := make([]*WaitingPlayer, 0, len(g.Waiting)+len(g.Players))
+	for _, p := range g.Players {
+		if p.Connected && (!p.JoiningNextRound || !containsPlayer(selected, p.ID)) {
+			waiting = append(waiting, &WaitingPlayer{
+				ID:        p.ID,
+				Name:      p.Name,
+				Connected: p.Connected,
+			})
+		}
+	}
+	for _, p := range g.Waiting {
+		if p.JoiningNextRound && p.Connected && len(selected) < MaxPlayers {
+			selected = append(selected, &Player{
+				ID:               p.ID,
+				Name:             p.Name,
+				Connected:        true,
+				JoiningNextRound: true,
+			})
+			continue
+		}
+		p.JoiningNextRound = false
+		waiting = append(waiting, p)
+	}
+	g.Players = selected
+	g.Waiting = waiting
+}
+
+func containsPlayer(players []*Player, id string) bool {
+	for _, p := range players {
+		if p.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func (g *Game) setNextRound(playerID string, join bool) error {
+	if g.Phase == PhaseLobby {
+		return errors.New("next-round choices are not available in the lobby")
+	}
+	if p := g.player(playerID); p != nil {
+		if p.JoiningNextRound == join {
+			return nil
+		}
+		if join && g.nextRoundCount() >= MaxPlayers {
+			return actionError{code: "next_round_full", message: "the next round is full"}
+		}
+		p.JoiningNextRound = join
+		return nil
+	}
+	if p := g.waitingPlayer(playerID); p != nil {
+		if p.JoiningNextRound == join {
+			return nil
+		}
+		if join && g.nextRoundCount() >= MaxPlayers {
+			return actionError{code: "next_round_full", message: "the next round is full"}
+		}
+		p.JoiningNextRound = join
+		return nil
+	}
+	return errors.New("player is not in this room")
+}
+
+func (g *Game) nextRoundCount() int {
+	count := 0
+	for _, p := range g.Players {
+		if p.JoiningNextRound {
+			count++
+		}
+	}
+	for _, p := range g.Waiting {
+		if p.JoiningNextRound {
+			count++
+		}
+	}
+	return count
+}
+
+func (g *Game) nextRoundConnectedCount() int {
+	count := 0
+	for _, p := range g.Players {
+		if p.Connected && p.JoiningNextRound {
+			count++
+		}
+	}
+	for _, p := range g.Waiting {
+		if p.Connected && p.JoiningNextRound {
+			count++
+		}
+	}
+	return count
 }
 
 func (g *Game) acknowledgeInitial(playerID string) error {
@@ -442,6 +599,16 @@ func (g *Game) end(reason string) {
 	g.Drawn = nil
 	g.Reveal = nil
 	g.Gift = nil
+	for _, p := range g.Players {
+		if !p.Connected {
+			p.JoiningNextRound = false
+		}
+	}
+	for _, p := range g.Waiting {
+		if !p.Connected {
+			p.JoiningNextRound = false
+		}
+	}
 	best := int(^uint(0) >> 1)
 	g.WinnerIDs = nil
 	for _, p := range g.Players {
@@ -471,17 +638,27 @@ func (g *Game) recordAction(kind, actorID string, first, second, target *CardRef
 
 func (g *Game) View(viewerID string) Snapshot {
 	viewer := g.player(viewerID)
+	waitingViewer := g.waitingPlayer(viewerID)
 	view := Snapshot{
-		Type:          "snapshot",
-		RoomID:        g.ID,
-		Phase:         g.Phase,
-		DrawPileCount: len(g.Deck),
-		HasDrawnCard:  g.Drawn != nil,
-		EndReason:     g.EndReason,
-		WinnerIDs:     g.WinnerIDs,
+		Type:             "snapshot",
+		RoomID:           g.ID,
+		YouRole:          MembershipSpectator,
+		NextRoundFull:    g.nextRoundCount() >= MaxPlayers,
+		NextRoundPlayers: g.nextRoundRoster(),
+		WaitingPlayers:   g.waitingRoster(),
+		Phase:            g.Phase,
+		DrawPileCount:    len(g.Deck),
+		HasDrawnCard:     g.Drawn != nil,
+		EndReason:        g.EndReason,
+		WinnerIDs:        g.WinnerIDs,
 	}
 	if viewer != nil {
 		view.You = Identity{ID: viewer.ID, Name: viewer.Name}
+		view.YouRole = MembershipActive
+		view.NextRoundJoined = viewer.JoiningNextRound
+	} else if waitingViewer != nil {
+		view.You = Identity{ID: waitingViewer.ID, Name: waitingViewer.Name}
+		view.NextRoundJoined = waitingViewer.JoiningNextRound
 	}
 	if len(g.Players) > 0 && g.Phase != PhaseLobby {
 		view.CurrentPlayerID = g.currentPlayerID()
@@ -536,6 +713,44 @@ func (g *Game) View(viewerID string) Snapshot {
 	return view
 }
 
+func (g *Game) nextRoundRoster() []RosterPlayerView {
+	roster := make([]RosterPlayerView, 0, MaxPlayers)
+	for _, p := range g.Players {
+		if p.JoiningNextRound && len(roster) < MaxPlayers {
+			roster = append(roster, RosterPlayerView{
+				ID:               p.ID,
+				Name:             p.Name,
+				Connected:        p.Connected,
+				JoiningNextRound: true,
+			})
+		}
+	}
+	for _, p := range g.Waiting {
+		if p.JoiningNextRound && len(roster) < MaxPlayers {
+			roster = append(roster, RosterPlayerView{
+				ID:               p.ID,
+				Name:             p.Name,
+				Connected:        p.Connected,
+				JoiningNextRound: true,
+			})
+		}
+	}
+	return roster
+}
+
+func (g *Game) waitingRoster() []RosterPlayerView {
+	players := make([]RosterPlayerView, 0, len(g.Waiting))
+	for _, p := range g.Waiting {
+		players = append(players, RosterPlayerView{
+			ID:               p.ID,
+			Name:             p.Name,
+			Connected:        p.Connected,
+			JoiningNextRound: p.JoiningNextRound,
+		})
+	}
+	return players
+}
+
 func (g *Game) requireTurn(playerID string, phase Phase) error {
 	if g.Phase != phase {
 		return fmt.Errorf("action is not available during %s", g.Phase)
@@ -555,6 +770,15 @@ func (g *Game) currentPlayerID() string {
 
 func (g *Game) player(id string) *Player {
 	for _, p := range g.Players {
+		if p.ID == id {
+			return p
+		}
+	}
+	return nil
+}
+
+func (g *Game) waitingPlayer(id string) *WaitingPlayer {
+	for _, p := range g.Waiting {
 		if p.ID == id {
 			return p
 		}

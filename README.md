@@ -4,7 +4,7 @@ A playable, server-authoritative Kabo card game. It runs as a normal web app for
 
 ## What is implemented
 
-- Two to eight players in in-memory rooms.
+- Two to eight active players in in-memory rooms, with read-only spectators who can queue for the next round.
 - Four face-down cards per player, arranged 2×2; each player privately sees their bottom two once.
 - Draw, replace, or discard turns.
 - 7/8 own peek, 9/10 opponent peek, J/Q any-two-card swap, and K opponent peek followed by any-two-card swap.
@@ -15,6 +15,7 @@ A playable, server-authoritative Kabo card game. It runs as a normal web app for
 - Private per-player snapshots: unrevealed card values never reach other browsers.
 - Discord OAuth code exchange, opaque game sessions, Activity `instanceId` rooms, and optional Activity Instance API validation.
 - Reconnect support for the same player identity and one-click rematches.
+- Mid-round spectators, an opt-in next-round roster capped at eight, and automatic promotion into the next round.
 
 Card faces use the CC0-licensed [`@letele/playing-cards`](https://github.com/letele/playing-cards) SVG deck, based on Adrian Kennard's classic designs. The custom indigo bear artwork remains the card back.
 
@@ -122,4 +123,4 @@ Discord Activities route network traffic through their proxy. WebSockets are sup
 
 ## Deliberately deferred
 
-Persistent rooms/history, spectator mode for mid-round joins, server restarts without data loss, a timed slap window, moderation controls, sounds/animation polish, telemetry, and horizontal scaling are post-MVP work. Moving rooms to Redis (or a durable room actor) is the natural next backend step.
+Persistent rooms/history, server restarts without data loss, a timed slap window, moderation controls, sounds/animation polish, telemetry, and horizontal scaling are post-MVP work. Moving rooms to Redis (or a durable room actor) is the natural next backend step.

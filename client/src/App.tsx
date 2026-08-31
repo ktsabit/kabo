@@ -5,6 +5,7 @@ import type {
   CardRef,
   ClientMessage,
   PlayerView,
+  RosterPlayerView,
   ServerMessage,
   SnapshotMessage,
 } from "../../shared/protocol";
@@ -145,7 +146,7 @@ function App() {
   };
 
   const slap = (target: CardRef) => {
-    if (!snapshot?.discardEventId) return;
+    if (snapshot?.youRole !== "active" || !snapshot.discardEventId) return;
     send({ type: "slap", eventId: snapshot.discardEventId, target });
   };
 
@@ -183,6 +184,7 @@ function App() {
 
   const me = snapshot.players.find((player) => player.id === snapshot.you.id);
   const opponents = snapshot.players.filter((player) => player.id !== snapshot.you.id);
+  const isSpectator = snapshot.youRole === "spectator";
   const isMyTurn = snapshot.currentPlayerId === snapshot.you.id;
   const winnerNames = snapshot.players.filter((player) => snapshot.winnerIds?.includes(player.id)).map((player) => player.name);
 
@@ -192,6 +194,8 @@ function App() {
         <div className="room-chip">Table <b>{platform.roomId.slice(-8)}</b></div>
         {platform.mode === "browser" && <button className="ghost-button" onClick={copyInvite}>Invite</button>}
       </header>
+
+      <NextRoundRoster snapshot={snapshot} send={send} />
 
       <section className={`game-surface ${snapshot.phase !== "lobby" ? "table-layout" : ""} ${snapshot.phase === "ended" ? "round-ended" : ""}`}>
         {snapshot.phase === "lobby" ? (
@@ -210,6 +214,7 @@ function App() {
                   onSlap={slap}
                   onGift={(slot) => send({ type: "gift", sourceSlot: slot })}
                   onInitialDone={() => send({ type: "acknowledge_initial" })}
+                  canInteract={!isSpectator}
                 />
               ))}
             </div>
@@ -238,13 +243,16 @@ function App() {
                 </div>
               </div>
               {snapshot.phase === "ended"
-                ? <RoundSummary snapshot={snapshot} winners={winnerNames} send={send} />
-                : <TurnPrompt snapshot={snapshot} isMyTurn={isMyTurn} />}
+                ? <RoundSummary snapshot={snapshot} winners={winnerNames} send={send} canStart={!isSpectator} />
+                : <>
+                  <TurnPrompt snapshot={snapshot} isMyTurn={isMyTurn} />
+                  {isSpectator && <SpectatorNotice joiningNextRound={snapshot.nextRoundJoined} />}
+                </>}
             </div>
 
             {me && (
               <div className="my-area">
-                <PlayerArea player={me} snapshot={snapshot} selected={swapSelection} onCard={cardAction} onSlap={slap} onGift={(slot) => send({ type: "gift", sourceSlot: slot })} onInitialDone={() => send({ type: "acknowledge_initial" })} wrongSlapTick={wrongSlapTick} mine />
+                <PlayerArea player={me} snapshot={snapshot} selected={swapSelection} onCard={cardAction} onSlap={slap} onGift={(slot) => send({ type: "gift", sourceSlot: slot })} onInitialDone={() => send({ type: "acknowledge_initial" })} wrongSlapTick={wrongSlapTick} mine canInteract />
                 {isMyTurn && snapshot.phase === "await_draw" && (
                   <button className="kabo-button" onClick={() => send({ type: "call_end" })}>KABO!</button>
                 )}
@@ -261,36 +269,102 @@ function App() {
   );
 }
 
+function NextRoundRoster({ snapshot, send }: { snapshot: SnapshotMessage; send: (message: ClientMessage) => void }) {
+  const spectators = snapshot.waitingPlayers.filter((player) => !player.joiningNextRound);
+  const canToggle = snapshot.phase !== "lobby";
+  const disabled = !canToggle || (!snapshot.nextRoundJoined && snapshot.nextRoundFull);
+  const label = snapshot.nextRoundJoined ? "✓ Joining next round" : "Join next round";
+
+  return (
+    <aside className="next-round-panel" aria-label="Next round roster">
+      <div className="next-round-heading">
+        <div>
+          <span className="eyebrow">NEXT ROUND</span>
+          <strong>{snapshot.nextRoundPlayers.length} / 8</strong>
+        </div>
+        <span className="next-round-status">{snapshot.phase === "lobby" ? "Lobby" : "Queue"}</span>
+      </div>
+      <div className="next-round-list">
+        {snapshot.nextRoundPlayers.map((player, index) => (
+          <RosterRow key={player.id} player={player} index={index} />
+        ))}
+        {snapshot.nextRoundPlayers.length === 0 && <div className="next-round-empty">No players queued yet</div>}
+      </div>
+      <div className="next-round-open">
+        {snapshot.nextRoundPlayers.length < 8 ? `${8 - snapshot.nextRoundPlayers.length} seat${snapshot.nextRoundPlayers.length === 7 ? "" : "s"} open` : "Roster full"}
+      </div>
+      {canToggle ? (
+        <button
+          className={`join-next-round ${snapshot.nextRoundJoined ? "joined" : ""}`}
+          disabled={disabled}
+          aria-pressed={snapshot.nextRoundJoined}
+          onClick={() => send({ type: "set_next_round", joinNextRound: !snapshot.nextRoundJoined })}
+        >
+          {label}
+        </button>
+      ) : (
+        <small className="next-round-note">Everyone here is in the current lobby.</small>
+      )}
+      {snapshot.phase !== "lobby" && snapshot.youRole === "spectator" && (
+        <small className="next-round-note">{snapshot.nextRoundJoined ? "You are watching and queued." : "You are watching only."}</small>
+      )}
+      {spectators.length > 0 && (
+        <div className="spectator-list">
+          <span>Watching</span>
+          <b>{spectators.map((player) => player.name).join(", ")}</b>
+        </div>
+      )}
+    </aside>
+  );
+}
+
+function RosterRow({ player, index }: { player: RosterPlayerView; index: number }) {
+  return (
+    <div className="next-round-player">
+      <span className="roster-number">{index + 1}</span>
+      <span className={`avatar avatar-${hash(player.id) % 5}`}>{player.name.slice(0, 1).toUpperCase()}</span>
+      <b>{player.name}</b>
+      <small className={player.connected ? "connected" : "away"}>{player.connected ? "Ready" : "Away"}</small>
+    </div>
+  );
+}
+
+function SpectatorNotice({ joiningNextRound }: { joiningNextRound: boolean }) {
+  return <div className="spectator-notice"><span className="spectator-eye">◉</span> Spectating this round · {joiningNextRound ? "joining the next one" : "watching only"}</div>;
+}
+
 function Lobby({ snapshot, platform, send }: { snapshot: SnapshotMessage; platform: PlatformSession; send: (message: ClientMessage) => void }) {
+  const canStart = snapshot.youRole === "active";
+  const players = snapshot.nextRoundPlayers;
   return (
     <div className="lobby-card">
       <h1 className="lobby-title">KABO</h1>
       <div className="lobby-players">
-        {snapshot.players.map((player, index) => (
+        {players.map((player, index) => (
           <div className="lobby-player" key={player.id}><span>{index + 1}</span><b>{player.name}</b><em>{player.connected ? "Ready" : "Away"}</em></div>
         ))}
-        {snapshot.players.length < 2 && <div className="waiting-seat">Waiting for a friend…</div>}
+        {players.length < 2 && <div className="waiting-seat">Waiting for another player…</div>}
       </div>
-      <button className="primary-button wide" disabled={snapshot.players.length < 2} onClick={() => send({ type: "start_game" })}>
-        {snapshot.players.length < 2 ? "Need 2 players" : "Deal the cards"}
+      <button className="primary-button wide" disabled={!canStart || players.length < 2} onClick={() => send({ type: "start_game" })}>
+        {!canStart ? "Waiting for a seat" : players.length < 2 ? "Need 2 players" : "Deal the cards"}
       </button>
       <small>{platform.mode === "discord" ? `${platform.participants ?? snapshot.players.length} in this Activity` : "Open the invite in another browser profile to join."}</small>
     </div>
   );
 }
 
-function RoundSummary({ snapshot, winners, send }: { snapshot: SnapshotMessage; winners: string[]; send: (message: ClientMessage) => void }) {
+function RoundSummary({ snapshot, winners, send, canStart }: { snapshot: SnapshotMessage; winners: string[]; send: (message: ClientMessage) => void; canStart: boolean }) {
   return (
     <div className="round-summary">
       <span className="eyebrow">ROUND COMPLETE</span>
       <strong>{winners.join(" & ")} {winners.length === 1 ? "wins" : "tie"}</strong>
       <small>{endReason(snapshot.endReason)}</small>
-      <button className="primary-button" onClick={() => send({ type: "start_game" })}>Next round</button>
+      {canStart ? <button className="primary-button" onClick={() => send({ type: "start_game" })}>Next round</button> : <small>Waiting for an active player to start the next round.</small>}
     </div>
   );
 }
 
-function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInitialDone, wrongSlapTick = 0, style, mine = false }: {
+function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInitialDone, wrongSlapTick = 0, style, mine = false, canInteract = true }: {
   player: PlayerView;
   snapshot: SnapshotMessage;
   selected: CardRef[];
@@ -301,11 +375,12 @@ function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInit
   wrongSlapTick?: number;
   style?: CSSProperties;
   mine?: boolean;
+  canInteract?: boolean;
 }) {
   const active = snapshot.currentPlayerId === player.id && snapshot.phase !== "initial_peek" && snapshot.phase !== "ended";
   const stillLooking = snapshot.phase === "initial_peek" && player.initialReady === false;
   const drawing = active && snapshot.phase === "await_choice";
-  const giftMode = snapshot.phase === "await_gift" && snapshot.pendingGift?.slapperId === snapshot.you.id && player.id === snapshot.you.id;
+  const giftMode = canInteract && snapshot.phase === "await_gift" && snapshot.pendingGift?.slapperId === snapshot.you.id && player.id === snapshot.you.id;
   const tap = useRef<{ key: string; at: number; timer?: number } | undefined>(undefined);
   const dragging = useRef(false);
   const area = useRef<HTMLElement>(null);
@@ -327,7 +402,7 @@ function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInit
   }, [mine, wrongSlapTick]);
 
   const handleTap = (target: CardRef) => {
-    if (dragging.current) return;
+    if (dragging.current || !canInteract) return;
     const key = refKey(target);
     const now = Date.now();
     if (tap.current?.key === key && now - tap.current.at < 320) {
@@ -368,14 +443,15 @@ function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInit
           const target = { playerId: player.id, slot: slot.slot };
           const isSelected = selected.some((item) => sameRef(item, target));
           const revealed = revealAt(snapshot, target);
+          const power = canInteract ? powerHint(snapshot, target, slot.occupied) : undefined;
           const peekedByOther = snapshot.publicPeek?.viewerId !== snapshot.you.id && snapshot.publicPeek && sameRef(snapshot.publicPeek.target, target);
           return (
-            <div className={`slot-wrap ${isSelected ? "selected" : ""} ${revealed ? "is-revealed" : ""} ${peekedByOther ? "peek-observed" : ""}`} key={slot.slot} data-card-ref={refKey(target)}>
+            <div className={`slot-wrap ${isSelected ? "selected" : ""} ${revealed ? "is-revealed" : ""} ${peekedByOther ? "peek-observed" : ""} ${power ? `power-target power-${power}` : ""}`} key={slot.slot} data-card-ref={refKey(target)}>
               <button
                 className="card-button"
-                disabled={!slot.occupied}
-                draggable={slot.occupied}
-                aria-label={`${mine ? "Your" : player.name}'s card ${slot.slot + 1}`}
+                disabled={!slot.occupied || !canInteract}
+                draggable={slot.occupied && canInteract}
+                aria-label={`${mine ? "Your" : player.name}'s card ${slot.slot + 1}${power ? ` · ${power === "peek" ? "peek target" : "swap target"}` : ""}`}
                 onClick={(event) => { if (event.detail === 0) giftMode ? onGift(slot.slot) : onCard(target); }}
                 onPointerUp={() => handleTap(target)}
                 onDragStart={(event) => {
@@ -386,7 +462,7 @@ function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInit
               >
                 {slot.occupied ? (slot.card || revealed ? <PlayingCard card={slot.card ?? revealed!} compact flipped /> : <CardBack compact />) : <div className="empty-slot" />}
               </button>
-              {slot.occupied && snapshot.discardTop && snapshot.phase !== "initial_peek" && snapshot.phase !== "ended" && (
+              {canInteract && slot.occupied && snapshot.discardTop && snapshot.phase !== "initial_peek" && snapshot.phase !== "ended" && (
                 <button className="slap-button" onClick={() => onSlap(target)} aria-label={`Slap ${player.name}'s card ${slot.slot + 1}`}>↯</button>
               )}
               {giftMode && slot.occupied && (
@@ -433,6 +509,15 @@ function CardBack({ compact = false }: { compact?: boolean }) {
 
 function sameRef(a: CardRef, b: CardRef) {
   return a.playerId === b.playerId && a.slot === b.slot;
+}
+
+function powerHint(snapshot: SnapshotMessage, target: CardRef, occupied: boolean): "peek" | "swap" | undefined {
+  if (!occupied || snapshot.youRole !== "active" || snapshot.currentPlayerId !== snapshot.you.id) return undefined;
+  const mine = target.playerId === snapshot.you.id;
+  if (snapshot.phase === "await_self_peek" && mine) return "peek";
+  if ((snapshot.phase === "await_opponent_peek" || snapshot.phase === "await_king_peek") && !mine) return "peek";
+  if (snapshot.phase === "await_swap") return "swap";
+  return undefined;
 }
 
 function refKey(ref: CardRef) {
