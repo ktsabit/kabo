@@ -192,10 +192,11 @@ function App() {
     <main className="app-shell">
       <header className="topbar">
         <div className="room-chip">Table <b>{platform.roomId.slice(-8)}</b></div>
-        {platform.mode === "browser" && <button className="ghost-button" onClick={copyInvite}>Invite</button>}
+        <div className="topbar-actions">
+          {snapshot.phase !== "lobby" && snapshot.phase !== "ended" && <NextRoundRoster snapshot={snapshot} send={send} />}
+          {platform.mode === "browser" && <button className="ghost-button" onClick={copyInvite}>Invite</button>}
+        </div>
       </header>
-
-      <NextRoundRoster snapshot={snapshot} send={send} />
 
       <section className={`game-surface ${snapshot.phase !== "lobby" ? "table-layout" : ""} ${snapshot.phase === "ended" ? "round-ended" : ""}`}>
         {snapshot.phase === "lobby" ? (
@@ -270,51 +271,30 @@ function App() {
 }
 
 function NextRoundRoster({ snapshot, send }: { snapshot: SnapshotMessage; send: (message: ClientMessage) => void }) {
-  const spectators = snapshot.waitingPlayers.filter((player) => !player.joiningNextRound);
-  const canToggle = snapshot.phase !== "lobby";
-  const disabled = !canToggle || (!snapshot.nextRoundJoined && snapshot.nextRoundFull);
-  const label = snapshot.nextRoundJoined ? "✓ Joining next round" : "Join next round";
+  const disabled = !snapshot.nextRoundJoined && snapshot.nextRoundFull;
 
   return (
-    <aside className="next-round-panel" aria-label="Next round roster">
-      <div className="next-round-heading">
-        <div>
-          <span className="eyebrow">NEXT ROUND</span>
-          <strong>{snapshot.nextRoundPlayers.length} / 8</strong>
+    <details className="next-round-menu">
+      <summary className="next-round-trigger" aria-label="Next round players">
+        <strong>{snapshot.nextRoundPlayers.length}/8</strong>
+      </summary>
+      <div className="next-round-popover">
+        <div className="next-round-list">
+          {snapshot.nextRoundPlayers.map((player, index) => (
+            <RosterRow key={player.id} player={player} index={index} />
+          ))}
+          {snapshot.nextRoundPlayers.length === 0 && <div className="next-round-empty">—</div>}
         </div>
-        <span className="next-round-status">{snapshot.phase === "lobby" ? "Lobby" : "Queue"}</span>
-      </div>
-      <div className="next-round-list">
-        {snapshot.nextRoundPlayers.map((player, index) => (
-          <RosterRow key={player.id} player={player} index={index} />
-        ))}
-        {snapshot.nextRoundPlayers.length === 0 && <div className="next-round-empty">No players queued yet</div>}
-      </div>
-      <div className="next-round-open">
-        {snapshot.nextRoundPlayers.length < 8 ? `${8 - snapshot.nextRoundPlayers.length} seat${snapshot.nextRoundPlayers.length === 7 ? "" : "s"} open` : "Roster full"}
-      </div>
-      {canToggle ? (
         <button
           className={`join-next-round ${snapshot.nextRoundJoined ? "joined" : ""}`}
           disabled={disabled}
           aria-pressed={snapshot.nextRoundJoined}
           onClick={() => send({ type: "set_next_round", joinNextRound: !snapshot.nextRoundJoined })}
         >
-          {label}
+          {snapshot.nextRoundJoined ? "Leave" : "Join"}
         </button>
-      ) : (
-        <small className="next-round-note">Everyone here is in the current lobby.</small>
-      )}
-      {snapshot.phase !== "lobby" && snapshot.youRole === "spectator" && (
-        <small className="next-round-note">{snapshot.nextRoundJoined ? "You are watching and queued." : "You are watching only."}</small>
-      )}
-      {spectators.length > 0 && (
-        <div className="spectator-list">
-          <span>Watching</span>
-          <b>{spectators.map((player) => player.name).join(", ")}</b>
-        </div>
-      )}
-    </aside>
+      </div>
+    </details>
   );
 }
 
@@ -324,29 +304,56 @@ function RosterRow({ player, index }: { player: RosterPlayerView; index: number 
       <span className="roster-number">{index + 1}</span>
       <span className={`avatar avatar-${hash(player.id) % 5}`}>{player.name.slice(0, 1).toUpperCase()}</span>
       <b>{player.name}</b>
-      <small className={player.connected ? "connected" : "away"}>{player.connected ? "Ready" : "Away"}</small>
+      <span className={`presence-dot ${player.connected ? "connected" : "away"}`} aria-label={player.connected ? "Connected" : "Disconnected"} />
+    </div>
+  );
+}
+
+function ReadyRoster({ snapshot, send }: { snapshot: SnapshotMessage; send: (message: ClientMessage) => void }) {
+  return (
+    <div className="ready-roster">
+      {snapshot.nextRoundPlayers.map((player, index) => {
+        const self = player.id === snapshot.you.id;
+        return (
+          <div className="ready-row" key={player.id}>
+            <span className="roster-number">{index + 1}</span>
+            <span className={`avatar avatar-${hash(player.id) % 5}`}>{player.name.slice(0, 1).toUpperCase()}</span>
+            <b>{self ? "You" : player.name}</b>
+            {self ? (
+              <button className={`ready-toggle ${snapshot.youReady ? "ready" : ""}`} aria-pressed={snapshot.youReady} onClick={() => send({ type: "set_ready", ready: !snapshot.youReady })}>
+                {snapshot.youReady ? "Ready" : "Check"}
+              </button>
+            ) : (
+              <small className={player.ready ? "ready" : player.connected ? "not-ready" : "away"}>
+                {player.ready ? "Ready" : player.connected ? "—" : "Away"}
+              </small>
+            )}
+          </div>
+        );
+      })}
+      {snapshot.nextRoundPlayers.length === 0 && <div className="waiting-seat">Waiting for players…</div>}
     </div>
   );
 }
 
 function SpectatorNotice({ joiningNextRound }: { joiningNextRound: boolean }) {
-  return <div className="spectator-notice"><span className="spectator-eye">◉</span> Spectating this round · {joiningNextRound ? "joining the next one" : "watching only"}</div>;
+  return <div className="spectator-notice"><span className="spectator-eye">◉</span> {joiningNextRound ? "Queued" : "Spectating"}</div>;
 }
 
 function Lobby({ snapshot, platform, send }: { snapshot: SnapshotMessage; platform: PlatformSession; send: (message: ClientMessage) => void }) {
-  const canStart = snapshot.youRole === "active";
+  const canStart = snapshot.youRole === "active" && snapshot.allReady;
   const players = snapshot.nextRoundPlayers;
+  const readyCount = players.filter((player) => player.ready).length;
   return (
     <div className="lobby-card">
       <h1 className="lobby-title">KABO</h1>
       <div className="lobby-players">
-        {players.map((player, index) => (
-          <div className="lobby-player" key={player.id}><span>{index + 1}</span><b>{player.name}</b><em>{player.connected ? "Ready" : "Away"}</em></div>
-        ))}
-        {players.length < 2 && <div className="waiting-seat">Waiting for another player…</div>}
+        <div className="ready-summary"><strong>{readyCount}/{players.length}</strong><span>ready</span></div>
+        <ReadyRoster snapshot={snapshot} send={send} />
+        {players.length < 2 && <div className="waiting-seat">Need 2 players</div>}
       </div>
       <button className="primary-button wide" disabled={!canStart || players.length < 2} onClick={() => send({ type: "start_game" })}>
-        {!canStart ? "Waiting for a seat" : players.length < 2 ? "Need 2 players" : "Deal the cards"}
+        {players.length < 2 ? "Need 2" : canStart ? "Start" : "Ready up"}
       </button>
       <small>{platform.mode === "discord" ? `${platform.participants ?? snapshot.players.length} in this Activity` : "Open the invite in another browser profile to join."}</small>
     </div>
@@ -354,12 +361,24 @@ function Lobby({ snapshot, platform, send }: { snapshot: SnapshotMessage; platfo
 }
 
 function RoundSummary({ snapshot, winners, send, canStart }: { snapshot: SnapshotMessage; winners: string[]; send: (message: ClientMessage) => void; canStart: boolean }) {
+  const players = snapshot.nextRoundPlayers;
+  const readyCount = players.filter((player) => player.ready).length;
+  const starter = snapshot.nextStarterId ? rosterName(snapshot, snapshot.nextStarterId) : undefined;
+  const canJoin = !snapshot.nextRoundJoined && !snapshot.nextRoundFull;
   return (
-    <div className="round-summary">
+    <div className="round-summary next-round-lobby">
       <span className="eyebrow">ROUND COMPLETE</span>
       <strong>{winners.join(" & ")} {winners.length === 1 ? "wins" : "tie"}</strong>
       <small>{endReason(snapshot.endReason)}</small>
-      {canStart ? <button className="primary-button" onClick={() => send({ type: "start_game" })}>Next round</button> : <small>Waiting for an active player to start the next round.</small>}
+      {starter && <small className="starter-note">{starter} starts</small>}
+      {canJoin && <button className="join-next-round summary-join" onClick={() => send({ type: "set_next_round", joinNextRound: true })}>Join</button>}
+      {players.length > 0 && (
+        <>
+          <div className="ready-summary"><strong>{readyCount}/{players.length}</strong><span>ready</span></div>
+          <ReadyRoster snapshot={snapshot} send={send} />
+        </>
+      )}
+      {canStart ? <button className="primary-button" disabled={!snapshot.allReady} onClick={() => send({ type: "start_game" })}>{snapshot.allReady ? "Start" : "Ready up"}</button> : <small>Waiting for a player to start.</small>}
     </div>
   );
 }
@@ -526,6 +545,10 @@ function refKey(ref: CardRef) {
 
 function revealAt(snapshot: SnapshotMessage, target: CardRef): Card | undefined {
   return snapshot.reveal?.cards.find((item) => sameRef(item.target, target))?.card;
+}
+
+function rosterName(snapshot: SnapshotMessage, id: string): string | undefined {
+  return [...snapshot.players, ...snapshot.nextRoundPlayers, ...snapshot.waitingPlayers].find((player) => player.id === id)?.name;
 }
 
 function uSeatStyle(index: number, total: number): CSSProperties {

@@ -28,6 +28,7 @@ func TestInitialCardsAreOnlyRevealedToTheirOwner(t *testing.T) {
 	g := New("room", rand.New(rand.NewSource(7)))
 	_, _ = g.AddOrReconnect("a", "Ada")
 	_, _ = g.AddOrReconnect("b", "Ben")
+	readyPlayers(t, g, "a", "b")
 	if err := g.Apply("a", ClientMessage{Type: "start_game"}); err != nil {
 		t.Fatal(err)
 	}
@@ -56,6 +57,7 @@ func TestInitialReadyStateIsVisibleToEveryone(t *testing.T) {
 	g := New("room", rand.New(rand.NewSource(8)))
 	_, _ = g.AddOrReconnect("a", "Ada")
 	_, _ = g.AddOrReconnect("b", "Ben")
+	readyPlayers(t, g, "a", "b")
 	if err := g.Apply("a", ClientMessage{Type: "start_game"}); err != nil {
 		t.Fatal(err)
 	}
@@ -73,6 +75,50 @@ func TestInitialReadyStateIsVisibleToEveryone(t *testing.T) {
 	}
 	if view.Players[1].InitialReady == nil || *view.Players[1].InitialReady {
 		t.Fatal("Ben should still be shown as looking")
+	}
+}
+
+func TestRoundCannotStartUntilEveryoneIsReady(t *testing.T) {
+	g := New("room", rand.New(rand.NewSource(9)))
+	_, _ = g.AddOrReconnect("a", "Ada")
+	_, _ = g.AddOrReconnect("b", "Ben")
+
+	if err := g.Apply("a", ClientMessage{Type: "start_game"}); err == nil {
+		t.Fatal("round should not start before players are ready")
+	}
+	if view := g.View("a"); view.AllReady || view.YouReady {
+		t.Fatalf("readiness should start false: %+v", view)
+	}
+	if err := g.Apply("a", ClientMessage{Type: "set_ready", Ready: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Apply("a", ClientMessage{Type: "start_game"}); err == nil {
+		t.Fatal("round should wait for Ben")
+	}
+	readyPlayers(t, g, "b")
+	if err := g.Apply("a", ClientMessage{Type: "start_game"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNextRoundStartsWithPreviousWinner(t *testing.T) {
+	g := startedGame(t)
+	g.player("a").Cards = []*Card{
+		{Rank: 10, Suit: Clubs}, {Rank: 10, Suit: Diamonds}, {Rank: 10, Suit: Hearts}, {Rank: 10, Suit: Spades},
+	}
+	g.player("b").Cards = []*Card{
+		{Rank: 1, Suit: Clubs}, {Rank: 1, Suit: Diamonds}, {Rank: 1, Suit: Hearts}, {Rank: 1, Suit: Spades},
+	}
+	g.end("called_end")
+	if g.NextStarterID != "b" {
+		t.Fatalf("next starter = %q, want b", g.NextStarterID)
+	}
+	readyPlayers(t, g, "a", "b")
+	if err := g.Apply("b", ClientMessage{Type: "start_game"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := g.currentPlayerID(); got != "b" {
+		t.Fatalf("next round starter = %q, want b", got)
 	}
 }
 
@@ -199,6 +245,7 @@ func TestDrawnCardPresenceIsPublicButValueIsPrivate(t *testing.T) {
 func TestEndedRoundCanStartAgain(t *testing.T) {
 	g := startedGame(t)
 	g.end("called_end")
+	readyPlayers(t, g, "a", "b")
 	if err := g.Apply("a", ClientMessage{Type: "start_game"}); err != nil {
 		t.Fatal(err)
 	}
@@ -256,6 +303,7 @@ func TestWaitingPlayersPromoteIntoNextRound(t *testing.T) {
 		t.Fatal(err)
 	}
 	g.end("called_end")
+	readyPlayers(t, g, "a", "b", "c")
 
 	if err := g.Apply("a", ClientMessage{Type: "start_game"}); err != nil {
 		t.Fatal(err)
@@ -280,6 +328,7 @@ func TestOptedOutActivePlayerBecomesSpectatorAfterRound(t *testing.T) {
 		t.Fatal(err)
 	}
 	g.end("called_end")
+	readyPlayers(t, g, "b", "c")
 	if err := g.Apply("b", ClientMessage{Type: "start_game"}); err != nil {
 		t.Fatal(err)
 	}
@@ -315,6 +364,7 @@ func startedGame(t *testing.T) *Game {
 	g := New("room", rand.New(rand.NewSource(11)))
 	_, _ = g.AddOrReconnect("a", "Ada")
 	_, _ = g.AddOrReconnect("b", "Ben")
+	readyPlayers(t, g, "a", "b")
 	if err := g.Apply("a", ClientMessage{Type: "start_game"}); err != nil {
 		t.Fatal(err)
 	}
@@ -325,4 +375,13 @@ func startedGame(t *testing.T) *Game {
 		t.Fatal(err)
 	}
 	return g
+}
+
+func readyPlayers(t *testing.T, g *Game, ids ...string) {
+	t.Helper()
+	for _, id := range ids {
+		if err := g.Apply(id, ClientMessage{Type: "set_ready", Ready: true}); err != nil {
+			t.Fatalf("ready %s: %v", id, err)
+		}
+	}
 }

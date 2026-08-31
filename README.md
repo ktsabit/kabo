@@ -14,8 +14,9 @@ A playable, server-authoritative Kabo card game. It runs as a normal web app for
 - Full scoring, including Jokers at 0 and red Kings at −1.
 - Private per-player snapshots: unrevealed card values never reach other browsers.
 - Discord OAuth code exchange, opaque game sessions, Activity `instanceId` rooms, and optional Activity Instance API validation.
-- Reconnect support for the same player identity and one-click rematches.
-- Mid-round spectators, an opt-in next-round roster capped at eight, and automatic promotion into the next round.
+- Reconnect support for the same player identity and ready-gated rematches.
+- Mid-round spectators, a compact next-round roster capped at eight, and automatic promotion into the next round.
+- Lobby readiness checks for every selected player, with the previous round's winner starting the next round.
 
 Card faces use the CC0-licensed [`@letele/playing-cards`](https://github.com/letele/playing-cards) SVG deck, based on Adrian Kennard's classic designs. The custom indigo bear artwork remains the card back.
 
@@ -120,6 +121,7 @@ Discord Activities route network traffic through their proxy. WebSockets are sup
 - J/Q/K swaps require two different occupied slots, but both slots may belong to the same player.
 - A successful slap creates a new discard event, allowing same-rank slap chains. If it targets an opponent, that gift is resolved before the next slap in the chain.
 - The active turn is completed before an empty draw pile ends the round, except when a penalty needs a card and none remains.
+- A round starts only when every selected player is connected and ready; the previous winner gets the first turn when they join the next round.
 
 ## Deliberately deferred
 

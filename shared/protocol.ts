@@ -46,6 +46,7 @@ export interface RosterPlayerView {
   name: string;
   connected: boolean;
   joiningNextRound: boolean;
+  ready: boolean;
 }
 
 export interface RevealView {
@@ -79,6 +80,9 @@ export interface SnapshotMessage {
   youRole: "active" | "spectator";
   nextRoundJoined: boolean;
   nextRoundFull: boolean;
+  youReady: boolean;
+  allReady: boolean;
+  nextStarterId?: string;
   nextRoundPlayers: RosterPlayerView[];
   waitingPlayers: RosterPlayerView[];
   phase: GamePhase;
@@ -113,6 +117,7 @@ export type ServerMessage = SnapshotMessage | ErrorMessage | NoticeMessage;
 export type ClientMessage =
   | { type: "start_game" }
   | { type: "set_next_round"; joinNextRound: boolean }
+  | { type: "set_ready"; ready: boolean }
   | { type: "acknowledge_initial" }
   | { type: "draw" }
   | { type: "replace"; slot: number }

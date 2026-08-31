@@ -32,6 +32,7 @@ type ClientMessage struct {
 	EventID       int     `json:"eventId"`
 	SourceSlot    int     `json:"sourceSlot"`
 	JoinNextRound bool    `json:"joinNextRound"`
+	Ready         bool    `json:"ready"`
 }
 
 type CardSlotView struct {
@@ -54,6 +55,7 @@ type RosterPlayerView struct {
 	Name             string `json:"name"`
 	Connected        bool   `json:"connected"`
 	JoiningNextRound bool   `json:"joiningNextRound"`
+	Ready            bool   `json:"ready"`
 }
 
 type RevealCard struct {
@@ -92,6 +94,9 @@ type Snapshot struct {
 	YouRole          string             `json:"youRole"`
 	NextRoundJoined  bool               `json:"nextRoundJoined"`
 	NextRoundFull    bool               `json:"nextRoundFull"`
+	YouReady         bool               `json:"youReady"`
+	AllReady         bool               `json:"allReady"`
+	NextStarterID    string             `json:"nextStarterId,omitempty"`
 	NextRoundPlayers []RosterPlayerView `json:"nextRoundPlayers"`
 	WaitingPlayers   []RosterPlayerView `json:"waitingPlayers"`
 	Phase            Phase              `json:"phase"`
