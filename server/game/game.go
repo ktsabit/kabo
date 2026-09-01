@@ -469,7 +469,10 @@ func (g *Game) replace(playerID string, slot int) error {
 	g.Drawn = nil
 	g.openDiscard(old)
 	target := CardRef{PlayerID: playerID, Slot: slot}
-	g.recordAction("replace", playerID, nil, nil, &target)
+	// The replaced card is now public on the discard pile. Include it in the
+	// action so clients can animate the actual card leaving the hand instead
+	// of reusing the previous discard card.
+	g.recordActionWithCard("replace", playerID, nil, nil, &target, old)
 	g.finishTurn()
 	return nil
 }
@@ -485,7 +488,9 @@ func (g *Game) discardDrawn(playerID string) error {
 	g.Drawn = nil
 	g.openDiscard(card)
 	g.ActorID = playerID
-	g.recordAction("discard", playerID, nil, nil, nil)
+	// This is the card that is about to land on the discard pile. It is safe to
+	// broadcast because discard cards are public after this action.
+	g.recordActionWithCard("discard", playerID, nil, nil, nil, card)
 	switch card.Rank {
 	case 7, 8:
 		g.Phase = PhaseAwaitSelfPeek

@@ -346,12 +346,13 @@ func TestSwapAndReplaceActionsAreBroadcast(t *testing.T) {
 
 	g.Current = 0
 	g.Phase = PhaseAwaitChoice
+	oldID := g.player("a").Cards[2].ID
 	g.Drawn = &Card{ID: "replacement", Rank: 4, Suit: Hearts}
 	if err := g.Apply("a", ClientMessage{Type: "replace", Slot: 2}); err != nil {
 		t.Fatal(err)
 	}
 	action = g.View("b").Action
-	if action == nil || action.Kind != "replace" || action.Target == nil || *action.Target != (CardRef{PlayerID: "a", Slot: 2}) {
+	if action == nil || action.Kind != "replace" || action.Target == nil || *action.Target != (CardRef{PlayerID: "a", Slot: 2}) || action.Card == nil || action.Card.ID != oldID {
 		t.Fatalf("replace action was not broadcast: %+v", action)
 	}
 }
@@ -369,10 +370,11 @@ func TestDrawnCardPresenceIsPublicButValueIsPrivate(t *testing.T) {
 	if !opponent.HasDrawnCard || opponent.DrawnCard != nil {
 		t.Fatal("opponent should see a face-down drawn card without receiving its value")
 	}
+	drawnID := owner.DrawnCard.ID
 	if err := g.Apply("a", ClientMessage{Type: "discard_drawn"}); err != nil {
 		t.Fatal(err)
 	}
-	if action := g.View("b").Action; action == nil || action.Kind != "discard" {
+	if action := g.View("b").Action; action == nil || action.Kind != "discard" || action.Card == nil || action.Card.ID != drawnID {
 		t.Fatalf("drawn discard movement was not broadcast: %+v", action)
 	}
 }

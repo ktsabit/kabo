@@ -21,16 +21,18 @@ html, body, #root { width: 100%; height: 100%; min-height: 0; margin: 0; }
 body {
   min-width: 320px;
   min-height: 100dvh;
-  overflow: hidden;
+  overflow: auto;
+  scrollbar-width: none;
   background:
     radial-gradient(circle at 10% 20%, rgba(48, 57, 185, .32), transparent 32%),
     radial-gradient(circle at 85% 15%, rgba(132, 104, 255, .14), transparent 26%),
     linear-gradient(165deg, #0d1033 0%, #080a20 54%, #100c2d 100%);
 }
+body::-webkit-scrollbar { display: none; }
 button { font: inherit; }
 button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 
-.app-shell { position: relative; width: 100%; height: 100dvh; min-height: 0; padding: max(14px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); display: flex; flex-direction: column; overflow: hidden; }
+.app-shell { position: relative; width: 100%; min-height: 100dvh; padding: max(14px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); display: flex; flex-direction: column; overflow: visible; }
 .topbar { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .topbar-actions { display: flex; align-items: center; gap: 10px; }
 .brand { display: flex; align-items: center; gap: 10px; font-family: Georgia, serif; font-size: 20px; letter-spacing: -.02em; }
@@ -63,14 +65,15 @@ button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 
 .game-surface { flex: 1; min-height: 0; display: grid; grid-template-rows: minmax(145px, auto) 1fr minmax(170px, auto); align-items: center; gap: 10px; padding: 8px 0; }
 .game-surface:not(.table-layout) { overflow-y: auto; }
-.game-surface.table-layout { position: relative; overflow: hidden; }
+.game-surface.table-layout { position: relative; overflow: visible; }
 .opponents-u { position: absolute; z-index: 2; inset: 44px 0 168px; pointer-events: none; }
 .opponents-u .player-area { position: absolute; left: var(--u-x); top: var(--u-y); transform: translate(-50%, -50%) scale(var(--u-scale)); transform-origin: center; pointer-events: auto; }
 .table-layout .table-center { grid-row: 2; z-index: 1; }
 .table-layout .my-area { grid-row: 3; z-index: 2; }
+.table-layout .my-area { transform: translateY(-24px); }
 .my-area { display: flex; justify-content: center; align-items: center; gap: 20px; }
 .player-area { position: relative; isolation: isolate; padding: 9px 12px 12px; border: 0; border-radius: 18px; transition: .25s ease; }
-.player-area::before { content: ""; position: absolute; z-index: 0; inset: -52px -82px; border-radius: 44%; pointer-events: none; opacity: 0; transform: scale(.7); background: radial-gradient(ellipse at center, rgba(255,211,110,.54) 0%, rgba(255,190,72,.27) 28%, rgba(255,211,110,.12) 50%, rgba(255,211,110,.04) 66%, transparent 82%); filter: blur(34px); transition: opacity .35s ease, transform .5s cubic-bezier(.2,.75,.25,1); }
+.player-area::before { content: ""; position: absolute; z-index: 0; inset: -12px -16px; border-radius: 999px; pointer-events: none; opacity: 0; transform: scale(.7); background: radial-gradient(ellipse at center, rgba(255,211,110,.54) 0%, rgba(255,190,72,.27) 34%, rgba(255,211,110,.1) 60%, transparent 82%); filter: blur(18px); transition: opacity .35s ease, transform .5s cubic-bezier(.2,.75,.25,1); }
 .player-area > * { position: relative; z-index: 1; }
 .player-area.active::before { opacity: 1; transform: scale(1); animation: turn-aura 2.8s ease-in-out infinite; }
 .player-area.active .card-grid { transform: scale(1.07); filter: drop-shadow(0 0 16px rgba(255,211,110,.4)); }
@@ -91,8 +94,7 @@ button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 @keyframes drawing-card { 0% { transform: translate(-10px, 4px) rotate(-14deg); opacity: .2; } 45%, 75% { transform: translate(8px, -3px) rotate(7deg); opacity: 1; } 100% { transform: translate(10px, -3px) rotate(7deg); opacity: 0; } }
 .avatar { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; color: #0a0c2c; font-weight: 800; font-size: 12px; }
 .avatar-0 { background: #a9b0ff; } .avatar-1 { background: #ff9f9a; } .avatar-2 { background: #8fdaee; } .avatar-3 { background: #c9b8ff; } .avatar-4 { background: #f0a9e4; }
-.card-grid { position: relative; display: flex; flex-wrap: nowrap; gap: clamp(4px, .6vw, 8px); justify-content: center; max-width: 100%; overflow-x: auto; scrollbar-width: none; transform-origin: center; transition: transform .3s ease, filter .3s ease; }
-.card-grid::-webkit-scrollbar { display: none; }
+.card-grid { position: relative; display: grid; grid-template-columns: repeat(2, var(--table-card-width)); grid-auto-rows: auto; gap: clamp(4px, .6vw, 8px); justify-content: center; max-width: 100%; overflow: visible; transform-origin: center; transition: transform .3s ease, filter .3s ease; }
 .slot-wrap { position: relative; border-radius: 10px; transition: transform .15s; }
 .slot-wrap.empty-slot-anchor { position: absolute; left: 50%; top: 0; width: var(--table-card-width); height: calc(var(--table-card-width) * 1.4); visibility: hidden; pointer-events: none; transform: translateX(-50%); }
 .slot-wrap.selected { transform: translateY(-6px); box-shadow: 0 0 0 3px var(--periwinkle); }
@@ -107,6 +109,10 @@ button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 @keyframes power-ring-flow { to { --power-angle: 360deg; } }
 .slot-wrap.peek-observed { z-index: 5; }
 .slot-wrap.peek-observed .card-back { animation: peeked-card-pulse 1.15s ease-in-out infinite; }
+.player-area.has-peek-reveal { z-index: 12; }
+.slot-wrap.opponent-peek-reveal { z-index: 12; }
+.slot-wrap.opponent-peek-reveal .card-button { transform: scale(1.52); transform-origin: center; transition: transform .42s cubic-bezier(.2,.8,.2,1); }
+.slot-wrap.opponent-peek-reveal .playing-card { box-shadow: 0 0 0 2px rgba(255,211,110,.78), 0 12px 32px rgba(255,190,72,.52); }
 .peek-indicator { position: absolute; z-index: 6; left: 50%; top: 50%; width: 34px; height: 22px; display: grid; place-items: center; border-radius: 70% 30% 70% 30%; transform: translate(-50%, -50%) rotate(45deg); background: rgba(255,211,110,.9); box-shadow: 0 0 0 5px rgba(255,211,110,.13), 0 0 25px rgba(255,211,110,.72); pointer-events: none; }
 .peek-indicator i { width: 9px; height: 9px; border-radius: 50%; background: #252b86; box-shadow: 0 0 0 3px white; animation: peek-eye 1.3s ease-in-out infinite; }
 @keyframes peeked-card-pulse { 50% { filter: brightness(1.28) saturate(.75); transform: scale(1.035); } }
@@ -154,7 +160,8 @@ button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 @keyframes discard-ring-flow { to { --discard-angle: 360deg; } }
 .drawn-card-position { min-width: var(--table-card-width); min-height: calc(var(--table-card-width) * 1.4); display: flex; justify-content: center; align-items: flex-start; }
 .drawn-card-zone { display: flex; flex-direction: column; align-items: center; gap: 5px; animation: draw-to-table .34s cubic-bezier(.2,.8,.2,1); }
-.action-card-ghost { animation: none !important; transition: none !important; filter: drop-shadow(0 14px 22px rgba(0,0,0,.42)); }
+.action-card-ghost { animation: none !important; transition: none !important; filter: drop-shadow(0 14px 22px rgba(0,0,0,.42)); overflow: visible; }
+.action-card-ghost > .playing-card, .action-card-ghost > .card-back { width: 100%; height: 100%; }
 .wrong-slap-flight { position: fixed; z-index: 100; pointer-events: none; visibility: hidden; filter: drop-shadow(0 12px 22px rgba(255,75,75,.42)); }
 .wrong-slap-flight .playing-card { width: 100%; height: 100%; }
 @keyframes draw-to-table { from { transform: translateX(-72px) rotate(-7deg); opacity: 0; } }
@@ -230,16 +237,20 @@ button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 .loading-screen h1 { margin: 8px 0 0; font-family: Georgia, serif; font-size: 38px; }
 .loading-screen p { margin: 0; color: var(--muted); font-size: 12px; }
 
+@media (min-width: 700px) {
+  .card-grid { display: flex; flex-wrap: nowrap; }
+}
+
 @media (max-width: 780px), (max-height: 620px) {
-  :root { --table-card-width: clamp(46px, min(14vw, 8.5vh), 64px); }
+  :root { --table-card-width: clamp(42px, min(13vw, 8.5vh), 60px); }
   .app-shell { padding-left: max(10px, env(safe-area-inset-left)); padding-right: max(10px, env(safe-area-inset-right)); }
   .topbar { min-height: 44px; gap: 8px; }
   .topbar-actions { gap: 6px; }
   .next-round-popover { width: min(220px, calc(100vw - 20px)); max-height: min(44vh, 320px); }
-  .game-surface.table-layout { grid-template-rows: minmax(88px, 22vh) minmax(138px, 1fr) minmax(112px, 25vh); gap: 4px; padding: 4px 0; }
-  .opponents-u { position: relative; inset: auto; grid-row: 1; display: flex; align-items: flex-start; gap: 6px; min-width: 0; min-height: 0; padding: 3px 8px 8px; overflow-x: auto; scrollbar-width: none; pointer-events: auto; }
+  .game-surface.table-layout { grid-template-rows: minmax(235px, 34vh) minmax(120px, 1fr) minmax(206px, 31vh); gap: 4px; padding: 8px 0; }
+  .opponents-u { --table-card-width: clamp(48px, min(14vw, 9vh), 64px); position: relative; inset: auto; grid-row: 1; align-self: start; display: flex; align-items: flex-start; justify-content: safe center; gap: 12px; min-width: 0; min-height: 0; padding: 8px 52px 12px; overflow-x: auto; overflow-y: visible; scrollbar-width: none; pointer-events: auto; }
   .opponents-u::-webkit-scrollbar { display: none; }
-  .opponents-u .player-area { position: relative; left: auto; top: auto; flex: 0 0 auto; transform: scale(.62); transform-origin: top center; margin-right: -92px; pointer-events: auto; }
+  .opponents-u .player-area { position: relative; left: auto; top: auto; flex: 0 0 auto; transform: none; transform-origin: top center; margin-right: 0; pointer-events: auto; }
   .opponents-u .player-area:last-child { margin-right: 0; }
   .table-center { gap: 8px; }
   .pile-zone { gap: 7px; }
@@ -265,9 +276,9 @@ button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 
 @media (max-height: 650px) and (min-width: 600px) {
   :root { --table-card-width: clamp(44px, 7.4vh, 56px); }
-  .game-surface.table-layout { grid-template-rows: minmax(76px, 18vh) minmax(120px, 1fr) minmax(96px, 23vh); }
+  .game-surface.table-layout { grid-template-rows: minmax(152px, 24vh) minmax(120px, 1fr) minmax(152px, 24vh); }
   .player-heading { margin-bottom: 4px; }
-  .opponents-u .player-area { transform: scale(.55); margin-right: -122px; }
+  .opponents-u .player-area { transform: none; margin-right: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
