@@ -49,6 +49,7 @@ function App() {
   const [problem, setProblem] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [swapSelection, setSwapSelection] = useState<CardRef[]>([]);
+  const [actionAnimating, setActionAnimating] = useState(false);
   const socket = useRef<WebSocket | undefined>(undefined);
   const renderedSnapshot = useRef<SnapshotMessage | undefined>(undefined);
   const lastActionID = useRef(0);
@@ -76,7 +77,11 @@ function App() {
     document.documentElement.classList.add("action-in-flight");
     animationRunning.current = true;
     runningActionID.current = queued.action.id;
-    renderSnapshot(queued.snapshot, true);
+    renderedSnapshot.current = queued.snapshot;
+    flushSync(() => {
+      setActionAnimating(true);
+      setSnapshot(queued.snapshot);
+    });
     const hold: ActionVisualHold = { id: queued.action.id, release: holdActionVisuals(queued.action, heldActivePlayerID) };
     actionVisualHold.current?.release();
     actionVisualHold.current = hold;
@@ -95,8 +100,12 @@ function App() {
         }
         animationRunning.current = false;
         runningActionID.current = undefined;
-        if (actionQueue.current.length === 0) document.documentElement.classList.remove("action-in-flight");
-        if (actionQueue.current.length > 0) scheduleActionPump();
+        if (actionQueue.current.length === 0) {
+          document.documentElement.classList.remove("action-in-flight");
+          flushSync(() => setActionAnimating(false));
+        } else {
+          scheduleActionPump();
+        }
       });
   };
 
@@ -301,6 +310,7 @@ function App() {
   const isMyTurn = snapshot.currentPlayerId === snapshot.you.id;
   const winnerNames = snapshot.players.filter((player) => snapshot.winnerIds?.includes(player.id)).map((player) => player.name);
   const loserNames = snapshot.players.filter((player) => snapshot.loserIds?.includes(player.id)).map((player) => player.name);
+  const showingAftermath = snapshot.phase === "ended" && !actionAnimating;
 
   return (
     <main className="app-shell">
@@ -312,13 +322,9 @@ function App() {
         </div>
       </header>
 
-      <section className={`game-surface ${snapshot.phase !== "lobby" ? "table-layout" : ""} ${snapshot.phase === "ended" ? "round-ended" : ""}`}>
+      <section className={`game-surface ${snapshot.phase !== "lobby" ? "table-layout" : ""} ${showingAftermath ? "round-ended" : ""}`}>
         {snapshot.phase === "lobby" ? (
           <Lobby snapshot={snapshot} platform={platform} send={send} />
-        ) : snapshot.phase === "ended" ? (
-          <div className="ended-screen">
-            <RoundSummary snapshot={snapshot} winners={winnerNames} losers={loserNames} send={send} canStart={!isSpectator} />
-          </div>
         ) : (
           <>
             <div className={`opponents opponents-u opponents-${opponents.length}`} aria-label="Opponents">
@@ -333,54 +339,61 @@ function App() {
                   onSlap={slap}
                   onGift={(slot) => send({ type: "gift", sourceSlot: slot })}
                   onInitialDone={() => send({ type: "acknowledge_initial" })}
-                  canInteract={!isSpectator}
+                  canInteract={!isSpectator && snapshot.phase !== "ended"}
+                  revealEnded={showingAftermath}
                 />
               ))}
             </div>
 
-            <div className="table-center slap-dropzone" onDragOver={(event) => event.preventDefault()} onDrop={dropToSlap}>
-              <div className="pile-zone">
-                <button className="deck" disabled={!isMyTurn || snapshot.phase !== "await_draw"} onClick={() => send({ type: "draw" })}>
-                  <span>{snapshot.drawPileCount}</span>
-                  <small>DRAW</small>
-                </button>
-                <div className={`drawn-card-position ${snapshot.hasDrawnCard ? "occupied" : ""}`}>
-                  {snapshot.hasDrawnCard && (
-                    <div className="drawn-card-zone">
-                      {snapshot.drawnCard ? <PlayingCard card={snapshot.drawnCard} compact /> : <CardBack compact />}
+            <div className={`table-center slap-dropzone ${showingAftermath ? "aftermath-center" : ""}`} onDragOver={(event) => event.preventDefault()} onDrop={dropToSlap}>
+              {showingAftermath ? (
+                <RoundSummary snapshot={snapshot} winners={winnerNames} losers={loserNames} send={send} canStart={!isSpectator} />
+              ) : (
+                <>
+                  <div className="pile-zone">
+                    <button className="deck" disabled={!isMyTurn || snapshot.phase !== "await_draw"} onClick={() => send({ type: "draw" })}>
+                      <span>{snapshot.drawPileCount}</span>
+                      <small>DRAW</small>
+                    </button>
+                    <div className={`drawn-card-position ${snapshot.hasDrawnCard ? "occupied" : ""}`}>
+                      {snapshot.hasDrawnCard && (
+                        <div className="drawn-card-zone">
+                          {snapshot.drawnCard ? <PlayingCard card={snapshot.drawnCard} compact /> : <CardBack compact />}
+                        </div>
+                      )}
+                    </div>
+                    <div
+                      className={`discard-wrap ${canDiscardDrawn ? "can-discard" : ""}`}
+                      role={canDiscardDrawn ? "button" : undefined}
+                      tabIndex={canDiscardDrawn ? 0 : undefined}
+                      aria-label={canDiscardDrawn ? "Discard drawn card" : "Discard pile"}
+                      onClick={canDiscardDrawn ? discardDrawn : undefined}
+                      onKeyDown={(event) => {
+                        if (canDiscardDrawn && (event.key === "Enter" || event.key === " ")) {
+                          event.preventDefault();
+                          discardDrawn();
+                        }
+                      }}
+                    >
+                      {snapshot.discardTop ? <PlayingCard card={snapshot.discardTop} compact /> : <div className="empty-discard">Discard</div>}
+                      <small>DISCARD</small>
+                    </div>
+                  </div>
+                  <TurnPrompt snapshot={snapshot} isMyTurn={isMyTurn} />
+                  {isMyTurn && snapshot.phase === "await_swap" && swapSelection.length > 0 && (
+                    <div className="swap-controls" aria-label="Swap selection controls">
+                      <span>{swapSelection.length}/2</span>
+                      <button className="swap-clear" onClick={() => setSwapSelection([])}>Clear</button>
+                      <button className="primary-button swap-confirm" disabled={swapSelection.length !== 2} onClick={confirmSwap}>Confirm swap</button>
                     </div>
                   )}
-                </div>
-                <div
-                  className={`discard-wrap ${canDiscardDrawn ? "can-discard" : ""}`}
-                  role={canDiscardDrawn ? "button" : undefined}
-                  tabIndex={canDiscardDrawn ? 0 : undefined}
-                  aria-label={canDiscardDrawn ? "Discard drawn card" : "Discard pile"}
-                  onClick={canDiscardDrawn ? discardDrawn : undefined}
-                  onKeyDown={(event) => {
-                    if (canDiscardDrawn && (event.key === "Enter" || event.key === " ")) {
-                      event.preventDefault();
-                      discardDrawn();
-                    }
-                  }}
-                >
-                  {snapshot.discardTop ? <PlayingCard card={snapshot.discardTop} compact /> : <div className="empty-discard">Discard</div>}
-                  <small>DISCARD</small>
-                </div>
-              </div>
-              <TurnPrompt snapshot={snapshot} isMyTurn={isMyTurn} />
-              {isMyTurn && snapshot.phase === "await_swap" && swapSelection.length > 0 && (
-                <div className="swap-controls" aria-label="Swap selection controls">
-                  <span>{swapSelection.length}/2</span>
-                  <button className="swap-clear" onClick={() => setSwapSelection([])}>Clear</button>
-                  <button className="primary-button swap-confirm" disabled={swapSelection.length !== 2} onClick={confirmSwap}>Confirm swap</button>
-                </div>
+                </>
               )}
             </div>
 
             {me && (
               <div className="my-area">
-                <PlayerArea player={me} snapshot={snapshot} selected={swapSelection} onCard={cardAction} onSlap={slap} onGift={(slot) => send({ type: "gift", sourceSlot: slot })} onInitialDone={() => send({ type: "acknowledge_initial" })} mine canInteract />
+                <PlayerArea player={me} snapshot={snapshot} selected={swapSelection} onCard={cardAction} onSlap={slap} onGift={(slot) => send({ type: "gift", sourceSlot: slot })} onInitialDone={() => send({ type: "acknowledge_initial" })} mine canInteract={snapshot.phase !== "ended"} revealEnded={showingAftermath} />
                 {isMyTurn && snapshot.phase === "await_draw" && (
                   <button className="kabo-button" onClick={() => send({ type: "call_end" })}>KABO!</button>
                 )}
@@ -507,7 +520,7 @@ function RoundSummary({ snapshot, winners, losers, send, canStart }: { snapshot:
   );
 }
 
-function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInitialDone, style, mine = false, canInteract = true }: {
+function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInitialDone, style, mine = false, canInteract = true, revealEnded = true }: {
   player: PlayerView;
   snapshot: SnapshotMessage;
   selected: CardRef[];
@@ -518,6 +531,7 @@ function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInit
   style?: CSSProperties;
   mine?: boolean;
   canInteract?: boolean;
+  revealEnded?: boolean;
 }) {
   const active = snapshot.currentPlayerId === player.id && snapshot.phase !== "initial_peek" && snapshot.phase !== "ended";
   const stillLooking = snapshot.phase === "initial_peek" && player.initialReady === false;
@@ -580,12 +594,13 @@ function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInit
   const initialRevealHere = mine && snapshot.reveal?.kind === "initial";
   const hasPeekReveal = snapshot.reveal?.kind !== "initial" && Boolean(snapshot.reveal?.cards.some((item) => item.target.playerId === player.id));
   const penaltyPending = snapshot.phase !== "ended" && snapshot.action?.kind === "wrong_slap" && snapshot.action.actorId === player.id;
-  const winner = snapshot.phase === "ended" && snapshot.winnerIds?.includes(player.id);
+  const winner = revealEnded && snapshot.phase === "ended" && snapshot.winnerIds?.includes(player.id);
+  const arrangedCards = [...player.cards].sort((a, b) => handVisualOrder(a.slot) - handVisualOrder(b.slot));
   return (
-    <section ref={area} data-player-id={player.id} style={style} className={`player-area ${mine ? "mine" : ""} ${active ? "active" : ""} ${winner ? "winner" : ""} ${hasPeekReveal ? "has-peek-reveal" : ""} ${snapshot.phase === "ended" ? "cards-revealed" : ""} ${snapshot.phase === "await_choice" && mine ? "replace-mode" : ""}`}>
+    <section ref={area} data-player-id={player.id} style={style} className={`player-area ${mine ? "mine" : ""} ${active ? "active" : ""} ${winner ? "winner" : ""} ${hasPeekReveal ? "has-peek-reveal" : ""} ${revealEnded && snapshot.phase === "ended" ? "cards-revealed" : ""} ${snapshot.phase === "await_choice" && mine ? "replace-mode" : ""}`}>
       <div className="player-heading">
         <span className={`avatar avatar-${hash(player.id) % 5}`}>{player.name.slice(0, 1).toUpperCase()}</span>
-        <div><b>{mine ? "You" : player.name}</b>{snapshot.phase === "ended" ? <small>{player.score} pts</small> : !player.connected && <small>Disconnected</small>}</div>
+        <div><b title={player.name}>{mine ? "You" : player.name}</b>{revealEnded && snapshot.phase === "ended" ? <small>{player.score} pts</small> : !player.connected && <small>Disconnected</small>}</div>
         {stillLooking && (
           <span className="looking-indicator" role="status" aria-label={`${mine ? "You are" : `${player.name} is`} still looking at the opening cards`} title="Still looking">
             <i />
@@ -598,7 +613,7 @@ function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInit
         )}
       </div>
       <div className={`card-grid card-count-${player.cards.length}`}>
-        {player.cards.map((slot) => {
+        {arrangedCards.map((slot) => {
           const target = { playerId: player.id, slot: slot.slot };
           const selectionOrder = selected.findIndex((item) => sameRef(item, target)) + 1;
           const isSelected = selectionOrder > 0;
@@ -623,7 +638,11 @@ function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInit
                 }}
                 onDragEnd={() => window.setTimeout(() => { dragging.current = false; }, 0)}
               >
-                {slot.occupied ? (slot.card || revealed ? <PlayingCard card={slot.card ?? revealed!} compact flipped /> : <CardBack compact />) : <div className="empty-slot" />}
+                {slot.occupied
+                  ? slot.card && revealEnded
+                    ? <PlayingCard card={slot.card} compact flipped />
+                    : <PeekableCard card={revealed} compact />
+                  : <div className="empty-slot" />}
               </button>
               {isSelected && <span className="selection-order" aria-hidden="true">{selectionOrder}</span>}
               {canInteract && slot.occupied && snapshot.discardTop && snapshot.phase !== "initial_peek" && snapshot.phase !== "ended" && (
@@ -691,8 +710,48 @@ function CardBack({ compact = false }: { compact?: boolean }) {
   return <div className={`card-back ${compact ? "compact" : ""}`} aria-label="Face-down card" />;
 }
 
+function PeekableCard({ card, compact = false }: { card?: Card; compact?: boolean }) {
+  const [face, setFace] = useState<Card | undefined>(card);
+  const [revealed, setRevealed] = useState(false);
+
+  useEffect(() => {
+    let firstFrame: number | undefined;
+    let secondFrame: number | undefined;
+    let hideTimer: number | undefined;
+    if (card) {
+      setFace(card);
+      setRevealed(false);
+      firstFrame = window.requestAnimationFrame(() => {
+        secondFrame = window.requestAnimationFrame(() => setRevealed(true));
+      });
+    } else if (face) {
+      setRevealed(false);
+      hideTimer = window.setTimeout(() => setFace(undefined), 460);
+    }
+    return () => {
+      if (firstFrame !== undefined) window.cancelAnimationFrame(firstFrame);
+      if (secondFrame !== undefined) window.cancelAnimationFrame(secondFrame);
+      if (hideTimer !== undefined) window.clearTimeout(hideTimer);
+    };
+  }, [card?.id]);
+
+  if (!face) return <CardBack compact={compact} />;
+  return (
+    <div className={`peek-card ${compact ? "compact" : ""} ${revealed ? "revealed" : ""}`} aria-label={revealed ? cardLabel(face) : "Face-down card"}>
+      <div className="peek-card-layer peek-card-back" aria-hidden="true"><CardBack compact={compact} /></div>
+      <div className="peek-card-layer peek-card-front" aria-hidden="true"><PlayingCard card={face} compact={compact} /></div>
+    </div>
+  );
+}
+
 function sameRef(a: CardRef, b: CardRef) {
   return a.playerId === b.playerId && a.slot === b.slot;
+}
+
+function handVisualOrder(slot: number) {
+  if (slot === 1) return 2;
+  if (slot === 2) return 1;
+  return slot;
 }
 
 function powerHint(snapshot: SnapshotMessage, target: CardRef, occupied: boolean): "peek" | "swap" | undefined {
@@ -801,7 +860,10 @@ async function animateReplace(action: ActionView, targetRef: CardRef, target: Ac
   const releaseDiscard = pinActionCard(discard);
   try {
     await Promise.all([
-      flyCard(target.element, target.rect, discardDestination, -30, 0, 680, action.card),
+      // Keep the outgoing card covering the old discard until the incoming
+      // card has also finished. Otherwise the old discard flashes back for a
+      // few frames between the two independent animations.
+      flyCard(target.element, target.rect, discardDestination, -30, 0, 855, action.card),
       flyCard(drawn.element, drawn.rect, targetDestination, 34, 95, 760, undefined, true),
     ]);
   } finally {
@@ -904,6 +966,7 @@ function animateWrongSlapShake(playerID: string): Promise<void> {
   const area = [...document.querySelectorAll<HTMLElement>(".player-area")].find((item) => item.dataset.playerId === playerID);
   if (!area) return Promise.resolve();
   const areaRect = area.getBoundingClientRect();
+  area.querySelector<HTMLElement>(".penalty-card-pending")?.classList.add("penalty-arriving");
   const flash = document.createElement("div");
   flash.className = "slap-flash";
   flash.style.setProperty("--flash-x", `${areaRect.left + areaRect.width / 2}px`);
@@ -947,9 +1010,11 @@ function flyCard(card: HTMLElement, from: DOMRect, to: DOMRect, arc: number, del
   const ghost = document.createElement("div");
   ghost.className = "action-card-ghost";
   let root: ReturnType<typeof createRoot> | undefined;
-  let front: HTMLElement | undefined;
+  let flipper: HTMLElement | undefined;
   if (flipToBack) {
-    front = document.createElement("div");
+    flipper = document.createElement("div");
+    flipper.className = "action-card-flipper";
+    const front = document.createElement("div");
     front.className = "action-card-layer action-card-front";
     const back = document.createElement("div");
     back.className = "action-card-layer action-card-back";
@@ -962,10 +1027,11 @@ function flyCard(card: HTMLElement, from: DOMRect, to: DOMRect, arc: number, del
       front.appendChild(clone);
     }
     back.appendChild(Object.assign(document.createElement("div"), { className: "card-back compact" }));
-    ghost.append(front, back);
+    flipper.append(front, back);
+    ghost.append(flipper);
   } else if (face) {
     root = createRoot(ghost);
-    root.render(<PlayingCard card={face} compact />);
+    flushSync(() => root!.render(<PlayingCard card={face} compact />));
   } else {
     const clone = card.cloneNode(true) as HTMLElement;
     clone.classList.remove("flip-in");
@@ -992,18 +1058,13 @@ function flyCard(card: HTMLElement, from: DOMRect, to: DOMRect, arc: number, del
     { width: `${midWidth}px`, height: `${midHeight}px`, transform: `translate3d(${dx * .5}px, ${dy * .5 + arc}px, 0) rotate(${arc > 0 ? 7 : -7}deg)`, opacity: 1, offset: .52 },
     { width: `${to.width}px`, height: `${to.height}px`, transform: `translate3d(${dx}px, ${dy}px, 0) rotate(0deg)`, opacity: 1 },
   ], { duration, delay, easing: "cubic-bezier(.2,.78,.2,1)", fill: "both" });
-  if (flipToBack && front) {
+  if (flipToBack && flipper) {
     const flipDelay = delay + duration * .68;
-    const flipDuration = Math.min(260, duration * .3);
-    front.animate([
+    const flipDuration = Math.min(300, duration * .32);
+    flipper.animate([
       { transform: "rotateY(0deg)" },
-      { transform: "rotateY(90deg)" },
-    ], { duration: flipDuration, delay: flipDelay, easing: "ease-in", fill: "both" });
-    const back = ghost.querySelector<HTMLElement>(".action-card-back");
-    back?.animate([
-      { transform: "rotateY(-90deg)" },
-      { transform: "rotateY(0deg)" },
-    ], { duration: flipDuration, delay: flipDelay, easing: "ease-out", fill: "both" });
+      { transform: "rotateY(180deg)" },
+    ], { duration: flipDuration, delay: flipDelay, easing: "cubic-bezier(.45,.05,.55,.95)", fill: "both" });
   }
   return new Promise<void>((resolve) => {
     let settled = false;
@@ -1081,10 +1142,16 @@ function holdActionVisuals(action: ActionView, activePlayerID?: string): () => v
   const activeArea = activePlayerID
     ? [...document.querySelectorAll<HTMLElement>(".player-area")].find((area) => area.dataset.playerId === activePlayerID)
     : undefined;
+  const penaltySlot = action.kind === "wrong_slap"
+    ? [...document.querySelectorAll<HTMLElement>(".player-area")]
+      .find((area) => area.dataset.playerId === action.actorId)
+      ?.querySelector<HTMLElement>(".penalty-card-pending")
+    : undefined;
   activeArea?.classList.add("action-active-held");
   return () => {
     releaseElements();
     activeArea?.classList.remove("action-active-held");
+    penaltySlot?.classList.remove("penalty-arriving");
   };
 }
 
