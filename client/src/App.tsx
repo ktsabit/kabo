@@ -13,6 +13,7 @@ import type {
 } from "../../shared/protocol";
 import { cardLabel, isRed } from "./cards";
 import { faceFor } from "./cardFaces";
+import { ActionSequence } from "./actionSequence";
 import { initializePlatform, type PlatformSession, websocketURL } from "./platform";
 
 type ConnectionState = "connecting" | "open" | "closed";
@@ -30,17 +31,29 @@ type ActionGeometry = {
   drawn?: ActionAnchor;
 };
 
-type QueuedAction = {
-  action: ActionView;
-  snapshot: SnapshotMessage;
-};
-
 type ActionVisualHold = {
   id: number;
   release: () => void;
 };
 
 const DOUBLE_TAP_WINDOW = 360;
+const activeActionAnimations = new Set<Animation>();
+
+function actionAnimate(element: Element, keyframes: Keyframe[] | PropertyIndexedKeyframes, options?: number | KeyframeAnimationOptions) {
+  const animation = element.animate(keyframes, options);
+  activeActionAnimations.add(animation);
+  const forget = () => activeActionAnimations.delete(animation);
+  animation.addEventListener("finish", forget, { once: true });
+  animation.addEventListener("cancel", forget, { once: true });
+  return animation;
+}
+
+function cancelActionAnimations() {
+  [...activeActionAnimations].forEach((animation) => animation.cancel());
+  activeActionAnimations.clear();
+  document.querySelectorAll(".action-card-ghost, .action-card-static, .wrong-slap-flight, .slap-flash")
+    .forEach((element) => element.remove());
+}
 
 function App() {
   const [platform, setPlatform] = useState<PlatformSession>();
@@ -52,13 +65,13 @@ function App() {
   const [actionAnimating, setActionAnimating] = useState(false);
   const socket = useRef<WebSocket | undefined>(undefined);
   const renderedSnapshot = useRef<SnapshotMessage | undefined>(undefined);
-  const lastActionID = useRef(0);
-  const actionQueue = useRef<QueuedAction[]>([]);
+  const latestSnapshot = useRef<SnapshotMessage | undefined>(undefined);
+  const actionSequence = useRef(new ActionSequence<ActionView, SnapshotMessage>());
   const animationRunning = useRef(false);
-  const runningActionID = useRef<number | undefined>(undefined);
+  const playbackEpoch = useRef(0);
+  const awaitingRecoverySnapshot = useRef(false);
   const animationPumpFrame = useRef<number | undefined>(undefined);
   const actionVisualHold = useRef<ActionVisualHold | undefined>(undefined);
-  const deferredSnapshot = useRef<SnapshotMessage | undefined>(undefined);
 
   const renderSnapshot = (next: SnapshotMessage, synchronous = false) => {
     renderedSnapshot.current = next;
@@ -66,18 +79,42 @@ function App() {
     else setSnapshot(next);
   };
 
+  const recoverVisualState = (authoritative?: SnapshotMessage) => {
+    playbackEpoch.current += 1;
+    actionSequence.current.recover(authoritative);
+    animationRunning.current = false;
+    if (animationPumpFrame.current !== undefined) {
+      window.cancelAnimationFrame(animationPumpFrame.current);
+      animationPumpFrame.current = undefined;
+    }
+    actionVisualHold.current?.release();
+    actionVisualHold.current = undefined;
+    cancelActionAnimations();
+    document.documentElement.classList.remove("action-in-flight");
+    clearHandCompaction();
+    if (authoritative) {
+      renderedSnapshot.current = authoritative;
+      flushSync(() => {
+        setSnapshot(authoritative);
+        setActionAnimating(false);
+      });
+    } else {
+      setActionAnimating(false);
+    }
+  };
+
   const pumpActionQueue = () => {
     animationPumpFrame.current = undefined;
     if (animationRunning.current) return;
-    const queued = actionQueue.current.shift();
+    const queued = actionSequence.current.beginNext();
     if (!queued) return;
 
     const geometry = captureActionGeometry(queued.action);
     clearHandCompaction();
     const heldActivePlayerID = renderedSnapshot.current?.currentPlayerId;
+    const epoch = playbackEpoch.current;
     document.documentElement.classList.add("action-in-flight");
     animationRunning.current = true;
-    runningActionID.current = queued.action.id;
     renderedSnapshot.current = queued.snapshot;
     flushSync(() => {
       setActionAnimating(true);
@@ -90,9 +127,9 @@ function App() {
     void animateAction(queued.action, geometry)
       .catch((error: unknown) => console.error("Kabo action animation failed", error))
       .finally(() => {
-        const deferred = deferredSnapshot.current;
+        if (epoch !== playbackEpoch.current) return;
+        const deferred = actionSequence.current.finish(queued.action.id);
         if (deferred) {
-          deferredSnapshot.current = undefined;
           renderSnapshot(deferred, true);
         }
         if (actionVisualHold.current?.id === queued.action.id) {
@@ -100,8 +137,7 @@ function App() {
           actionVisualHold.current = undefined;
         }
         animationRunning.current = false;
-        runningActionID.current = undefined;
-        if (actionQueue.current.length === 0) {
+        if (!actionSequence.current.hasQueued()) {
           document.documentElement.classList.remove("action-in-flight");
           clearHandCompaction();
           flushSync(() => setActionAnimating(false));
@@ -112,45 +148,23 @@ function App() {
   };
 
   const scheduleActionPump = () => {
-    if (animationRunning.current || animationPumpFrame.current !== undefined) return;
+    if (animationRunning.current || animationPumpFrame.current !== undefined || !actionSequence.current.hasQueued()) return;
     animationPumpFrame.current = window.requestAnimationFrame(pumpActionQueue);
   };
 
   const queueSnapshot = (next: SnapshotMessage) => {
-    const action = next.action;
-    if (!renderedSnapshot.current) {
-      lastActionID.current = action?.id ?? 0;
-      renderSnapshot(next);
+    latestSnapshot.current = next;
+    if (awaitingRecoverySnapshot.current) {
+      awaitingRecoverySnapshot.current = false;
+      recoverVisualState(next);
+      setNotice("Back at the table");
+      window.setTimeout(() => setNotice(undefined), 1800);
       return;
     }
-
-    if (!action) {
-      if (animationRunning.current || actionQueue.current.length > 0) deferredSnapshot.current = next;
-      else renderSnapshot(next);
-      return;
-    }
-
-    // A process restart can recreate a room with fresh cursors. Do not let a
-    // stale local cursor suppress every action from the new server instance.
-    if (action.id < lastActionID.current) {
-      actionQueue.current.length = 0;
-      lastActionID.current = action.id;
-      if (animationRunning.current) deferredSnapshot.current = next;
-      else renderSnapshot(next);
-      return;
-    }
-
-    if (action.id === lastActionID.current) {
-      const waiting = actionQueue.current.find((item) => item.action.id === action.id);
-      if (waiting) waiting.snapshot = next;
-      else if (runningActionID.current === action.id) deferredSnapshot.current = next;
-      else if (!animationRunning.current && actionQueue.current.length === 0) renderSnapshot(next);
-      return;
-    }
-
-    lastActionID.current = action.id;
-    actionQueue.current.push({ action, snapshot: next });
-    scheduleActionPump();
+    const decision = actionSequence.current.ingest(next, renderedSnapshot.current !== undefined);
+    if (decision === "render") renderSnapshot(next);
+    else if (decision === "queue") scheduleActionPump();
+    else if (decision === "restart") recoverVisualState(next);
   };
 
   useEffect(() => {
@@ -192,7 +206,9 @@ function App() {
         }
       };
       ws.onclose = () => {
-        if (stopped) return;
+        if (stopped || socket.current !== ws) return;
+        awaitingRecoverySnapshot.current = true;
+        recoverVisualState(latestSnapshot.current);
         setConnection("closed");
         attempt += 1;
         retry = window.setTimeout(connect, Math.min(5000, 500 * 2 ** attempt));
@@ -207,6 +223,31 @@ function App() {
       socket.current?.close();
     };
   }, [platform]);
+
+  useEffect(() => {
+    let resizeFrame: number | undefined;
+    const recoverInterruptedLayout = () => {
+      if (!animationRunning.current && !actionSequence.current.isBusy()) return;
+      recoverVisualState(latestSnapshot.current);
+    };
+    const onVisibilityChange = () => {
+      if (document.hidden) recoverInterruptedLayout();
+    };
+    const onResize = () => {
+      if (resizeFrame !== undefined) window.cancelAnimationFrame(resizeFrame);
+      resizeFrame = window.requestAnimationFrame(recoverInterruptedLayout);
+    };
+    const onOffline = () => socket.current?.close();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("resize", onResize);
+    window.addEventListener("offline", onOffline);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("offline", onOffline);
+      if (resizeFrame !== undefined) window.cancelAnimationFrame(resizeFrame);
+    };
+  }, []);
 
   useEffect(() => {
     setSwapSelection([]);
@@ -269,7 +310,7 @@ function App() {
     send({ type: "slap", eventId: snapshot.discardEventId, target });
   };
 
-  const canDiscardDrawn = Boolean(snapshot?.drawnCard && snapshot.phase === "await_choice" && snapshot.currentPlayerId === snapshot.you.id);
+  const canDiscardDrawn = Boolean(connection === "open" && !actionAnimating && snapshot?.drawnCard && snapshot.phase === "await_choice" && snapshot.currentPlayerId === snapshot.you.id);
   const discardDrawn = () => {
     if (canDiscardDrawn) send({ type: "discard_drawn" });
   };
@@ -313,6 +354,7 @@ function App() {
   const winnerNames = snapshot.players.filter((player) => snapshot.winnerIds?.includes(player.id)).map((player) => player.name);
   const loserNames = snapshot.players.filter((player) => snapshot.loserIds?.includes(player.id)).map((player) => player.name);
   const showingAftermath = snapshot.phase === "ended" && !actionAnimating;
+  const tableLocked = connection !== "open" || actionAnimating;
 
   return (
     <main className="app-shell">
@@ -341,7 +383,7 @@ function App() {
                   onSlap={slap}
                   onGift={(slot) => send({ type: "gift", sourceSlot: slot })}
                   onInitialDone={() => send({ type: "acknowledge_initial" })}
-                  canInteract={!isSpectator && snapshot.phase !== "ended"}
+                  canInteract={!tableLocked && !isSpectator && snapshot.phase !== "ended"}
                   revealEnded={showingAftermath}
                 />
               ))}
@@ -353,7 +395,7 @@ function App() {
               ) : (
                 <>
                   <div className="pile-zone">
-                    <button className="deck" disabled={!isMyTurn || snapshot.phase !== "await_draw"} onClick={() => send({ type: "draw" })}>
+                    <button className="deck" disabled={tableLocked || !isMyTurn || snapshot.phase !== "await_draw"} onClick={() => send({ type: "draw" })}>
                       <span>{snapshot.drawPileCount}</span>
                       <small>DRAW</small>
                     </button>
@@ -397,9 +439,9 @@ function App() {
 
             {me && (
               <div className="my-area">
-                <PlayerArea player={me} snapshot={snapshot} selected={swapSelection} onCard={cardAction} onSlap={slap} onGift={(slot) => send({ type: "gift", sourceSlot: slot })} onInitialDone={() => send({ type: "acknowledge_initial" })} mine canInteract={snapshot.phase !== "ended"} revealEnded={showingAftermath} />
+                <PlayerArea player={me} snapshot={snapshot} selected={swapSelection} onCard={cardAction} onSlap={slap} onGift={(slot) => send({ type: "gift", sourceSlot: slot })} onInitialDone={() => send({ type: "acknowledge_initial" })} mine canInteract={!tableLocked && snapshot.phase !== "ended"} revealEnded={showingAftermath} />
                 {isMyTurn && snapshot.phase === "await_draw" && (
-                  <button className="kabo-button" onClick={() => send({ type: "call_end" })}>KABO!</button>
+                  <button className="kabo-button" disabled={tableLocked} onClick={() => send({ type: "call_end" })}>KABO!</button>
                 )}
               </div>
             )}
@@ -407,11 +449,33 @@ function App() {
         )}
       </section>
 
+      {actionAnimating && snapshot.action && <ActionFeedback snapshot={snapshot} />}
+      {connection !== "open" && (
+        <div className="reconnect-banner" role="status" aria-live="polite">
+          <span className={`connection-dot ${connection}`} />
+          Reconnecting · actions paused
+        </div>
+      )}
       {problem && <div className="toast error" role="alert">{problem}</div>}
       {notice && <div className="toast">{notice}</div>}
       <span className={`connection-dot table-connection ${connection}`} aria-label={connection === "open" ? "Connected" : "Reconnecting"} />
     </main>
   );
+}
+
+function ActionFeedback({ snapshot }: { snapshot: SnapshotMessage }) {
+  const action = snapshot.action;
+  if (!action) return null;
+  const actor = snapshot.players.find((player) => player.id === action.actorId)?.name ?? "Player";
+  const text = {
+    swap: `${actor} swaps two cards`,
+    replace: `${actor} replaces a card`,
+    discard: `${actor} discards`,
+    slap: `${actor} lands the slap`,
+    wrong_slap: `${actor} missed · penalty`,
+    gift: `${actor} gives a card`,
+  }[action.kind];
+  return <div className={`action-feedback feedback-${action.kind}`} role="status" aria-live="polite">{text}</div>;
 }
 
 function NextRoundRoster({ snapshot, send }: { snapshot: SnapshotMessage; send: (message: ClientMessage) => void }) {
@@ -603,7 +667,7 @@ function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInit
     .filter((slot) => handVisualRow(slot.slot) === row)
     .sort((a, b) => handVisualColumn(a.slot) - handVisualColumn(b.slot)));
   return (
-    <section ref={area} data-player-id={player.id} style={style} className={`player-area ${mine ? "mine" : ""} ${active ? "active" : ""} ${winner ? "winner" : ""} ${hasPeekReveal ? "has-peek-reveal" : ""} ${revealEnded && snapshot.phase === "ended" ? "cards-revealed" : ""} ${snapshot.phase === "await_choice" && mine ? "replace-mode" : ""}`}>
+    <section ref={area} data-player-id={player.id} style={style} className={`player-area ${mine ? "mine" : ""} ${active ? "active" : ""} ${!player.connected ? "disconnected" : ""} ${winner ? "winner" : ""} ${hasPeekReveal ? "has-peek-reveal" : ""} ${revealEnded && snapshot.phase === "ended" ? "cards-revealed" : ""} ${snapshot.phase === "await_choice" && mine ? "replace-mode" : ""}`}>
       <div className="player-heading">
         <span className={`avatar avatar-${hash(player.id) % 5}`}>{player.name.slice(0, 1).toUpperCase()}</span>
         <div><b title={player.name}>{mine ? "You" : player.name}</b>{revealEnded && snapshot.phase === "ended" ? <small>{player.score} pts</small> : !player.connected && <small>Disconnected</small>}</div>
@@ -865,13 +929,21 @@ async function animateSwap(firstRef: CardRef, secondRef: CardRef, first: ActionA
   const distance = Math.hypot(secondDestination.left - first.rect.left, secondDestination.top - first.rect.top);
   const swapArc = Math.min(96, Math.max(48, distance * .16));
   const restore = hideCardButtons([firstRef, secondRef]);
+  let arrived = 0;
+  let restored = false;
+  const revealDestinations = () => {
+    arrived += 1;
+    if (arrived < 2 || restored) return;
+    restored = true;
+    restore();
+  };
   try {
     await Promise.all([
-      flyCard(cardBackElement(), first.rect, secondDestination, -swapArc, 0, 820, undefined, false, 0, "swap-card-flight"),
-      flyCard(cardBackElement(), second.rect, firstDestination, swapArc, 0, 820, undefined, false, 0, "swap-card-flight"),
+      flyCard(cardBackElement(), first.rect, secondDestination, -swapArc, 0, 760, undefined, false, 0, "swap-card-flight", { holdAtDestination: 80, beforeRemove: revealDestinations }),
+      flyCard(cardBackElement(), second.rect, firstDestination, swapArc, 0, 760, undefined, false, 0, "swap-card-flight", { holdAtDestination: 80, beforeRemove: revealDestinations }),
     ]);
   } finally {
-    restore();
+    if (!restored) restore();
   }
 }
 
@@ -934,7 +1006,7 @@ async function animateHandCompaction(playerId: string): Promise<void> {
     const next = card.getBoundingClientRect();
     const offsetX = previous.left - next.left;
     if (Math.abs(offsetX) < 1) return [];
-    return [card.animate([
+    return [actionAnimate(card, [
       { transform: `translate3d(${offsetX}px, 0, 0)` },
       { transform: "translate3d(0, 0, 0)" },
     ], { duration: 340, easing: "cubic-bezier(.2,.75,.25,1)", fill: "both" })];
@@ -988,7 +1060,7 @@ function animateWrongSlap(action: ActionView, geometry: ActionGeometry): Promise
 
   const dx = finalLeft - from.left;
   const dy = finalTop - from.top;
-  const animation = ghost.animate([
+  const animation = actionAnimate(ghost, [
     { transform: "translate3d(0,0,0) rotate(0deg) scale(.88)", opacity: 0 },
     { transform: `translate3d(${dx * .45}px, ${dy * .45 - 28}px, 0) rotate(-7deg) scale(1.04)`, opacity: 1, offset: .46 },
     { transform: `translate3d(${dx}px, ${dy}px, 0) rotate(-9deg) scale(.9)`, opacity: .92 },
@@ -1026,14 +1098,14 @@ function animateWrongSlapShake(playerID: string): Promise<void> {
   flash.style.setProperty("--flash-x", `${areaRect.left + areaRect.width / 2}px`);
   flash.style.setProperty("--flash-y", `${areaRect.top + areaRect.height / 2}px`);
   document.body.appendChild(flash);
-  const flashAnimation = flash.animate([{ opacity: 0 }, { opacity: 1, offset: .28 }, { opacity: 0 }], { duration: 520, easing: "ease-out" });
+  const flashAnimation = actionAnimate(flash, [{ opacity: 0 }, { opacity: 1, offset: .28 }, { opacity: 0 }], { duration: 520, easing: "ease-out" });
   const removeFlash = () => flash.remove();
   flashAnimation.addEventListener("finish", removeFlash, { once: true });
   flashAnimation.addEventListener("cancel", removeFlash, { once: true });
   window.setTimeout(removeFlash, 720);
   const baseTransform = getComputedStyle(area).transform;
   const withOffset = (x: number, rotation = 0) => `${baseTransform === "none" ? "" : `${baseTransform} `}translateX(${x}px) rotate(${rotation}deg)`;
-  const shakeAnimation = area.animate([
+  const shakeAnimation = actionAnimate(area, [
     { transform: withOffset(0), filter: "drop-shadow(0 0 0 rgba(255,75,75,0))" },
     { transform: withOffset(-9, -1), filter: "drop-shadow(0 0 30px rgba(255,75,75,.95))" },
     { transform: withOffset(8, 1), filter: "drop-shadow(0 0 38px rgba(255,75,75,.9))" },
@@ -1060,7 +1132,19 @@ async function animateGift(targetRef: CardRef, source: ActionAnchor): Promise<vo
   await flyCard(source.element, source.rect, destination, 28, 0, 720);
 }
 
-function flyCard(card: HTMLElement, from: DOMRect, to: DOMRect, arc: number, delay: number, duration: number, face?: Card, flipToBack = false, tilt = 7, flightClass = ""): Promise<void> {
+function flyCard(
+  card: HTMLElement,
+  from: DOMRect,
+  to: DOMRect,
+  arc: number,
+  delay: number,
+  duration: number,
+  face?: Card,
+  flipToBack = false,
+  tilt = 7,
+  flightClass = "",
+  settle?: { holdAtDestination?: number; beforeRemove?: () => void },
+): Promise<void> {
   const ghost = document.createElement("div");
   ghost.className = `action-card-ghost ${flightClass}`.trim();
   let root: ReturnType<typeof createRoot> | undefined;
@@ -1107,7 +1191,7 @@ function flyCard(card: HTMLElement, from: DOMRect, to: DOMRect, arc: number, del
   const dy = to.top - from.top;
   const midWidth = from.width + (to.width - from.width) * .52;
   const midHeight = from.height + (to.height - from.height) * .52;
-  const animation = ghost.animate([
+  const animation = actionAnimate(ghost, [
     { width: `${from.width}px`, height: `${from.height}px`, transform: "translate3d(0,0,0) rotate(0deg)", opacity: 1 },
     { width: `${midWidth}px`, height: `${midHeight}px`, transform: `translate3d(${dx * .5}px, ${dy * .5 + arc}px, 0) rotate(${arc > 0 ? tilt : -tilt}deg)`, opacity: 1, offset: .52 },
     { width: `${to.width}px`, height: `${to.height}px`, transform: `translate3d(${dx}px, ${dy}px, 0) rotate(0deg)`, opacity: 1 },
@@ -1115,7 +1199,7 @@ function flyCard(card: HTMLElement, from: DOMRect, to: DOMRect, arc: number, del
   if (flipToBack && flipper) {
     const flipDelay = delay + duration * .68;
     const flipDuration = Math.min(300, duration * .32);
-    flipper.animate([
+    actionAnimate(flipper, [
       { transform: "rotateY(0deg)" },
       { transform: "rotateY(180deg)" },
     ], { duration: flipDuration, delay: flipDelay, easing: "cubic-bezier(.45,.05,.55,.95)", fill: "both" });
@@ -1123,10 +1207,7 @@ function flyCard(card: HTMLElement, from: DOMRect, to: DOMRect, arc: number, del
   return new Promise<void>((resolve) => {
     let settled = false;
     let fallback: number | undefined;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      if (fallback !== undefined) window.clearTimeout(fallback);
+    const cleanup = () => {
       try {
         root?.unmount();
       } finally {
@@ -1134,9 +1215,22 @@ function flyCard(card: HTMLElement, from: DOMRect, to: DOMRect, arc: number, del
       }
       resolve();
     };
-    animation.addEventListener("finish", finish, { once: true });
-    animation.addEventListener("cancel", finish, { once: true });
-    fallback = window.setTimeout(finish, duration + delay + 180);
+    const finish = (arrived: boolean) => {
+      if (settled) return;
+      settled = true;
+      if (fallback !== undefined) window.clearTimeout(fallback);
+      if (!arrived) {
+        cleanup();
+        return;
+      }
+      settle?.beforeRemove?.();
+      const hold = settle?.holdAtDestination ?? 0;
+      if (hold > 0) window.setTimeout(cleanup, hold);
+      else cleanup();
+    };
+    animation.addEventListener("finish", () => finish(true), { once: true });
+    animation.addEventListener("cancel", () => finish(false), { once: true });
+    fallback = window.setTimeout(() => finish(true), duration + delay + 180);
   });
 }
 

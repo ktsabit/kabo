@@ -110,6 +110,7 @@ func (g *Game) AddOrReconnect(id, name string) (*Player, error) {
 			if name != "" {
 				p.Name = name
 			}
+			g.skipDisconnectedDrawTurn()
 			return p, nil
 		}
 	}
@@ -147,6 +148,7 @@ func (g *Game) Disconnect(id string) {
 		if g.Phase == PhaseEnded {
 			p.JoiningNextRound = false
 		}
+		g.skipDisconnectedDrawTurn()
 		return
 	}
 	if p := g.waitingPlayer(id); p != nil {
@@ -683,8 +685,32 @@ func (g *Game) finishTurn() {
 			return
 		}
 	}
-	g.Current = (g.Current + 1) % len(g.Players)
+	g.advanceToNextConnected()
 	g.Phase = PhaseAwaitDraw
+}
+
+func (g *Game) advanceToNextConnected() bool {
+	if len(g.Players) == 0 {
+		return false
+	}
+	for step := 1; step <= len(g.Players); step++ {
+		index := (g.Current + step) % len(g.Players)
+		if g.Players[index].Connected {
+			g.Current = index
+			return true
+		}
+	}
+	return false
+}
+
+// A disconnected player is skipped only before drawing. If they disconnect
+// after drawing, the normal timeout resolves the visible in-progress turn so
+// no hidden card or power action is silently discarded.
+func (g *Game) skipDisconnectedDrawTurn() bool {
+	if g.Phase != PhaseAwaitDraw || len(g.Players) == 0 || g.Players[g.Current].Connected {
+		return false
+	}
+	return g.advanceToNextConnected()
 }
 
 func (g *Game) end(reason string) {
@@ -692,6 +718,12 @@ func (g *Game) end(reason string) {
 	g.EndReason = reason
 	g.RoundEndedAt = time.Now()
 	g.DeadlineAt = time.Time{}
+	// A slap or penalty can end the round while the active player still has a
+	// drawn card. Return it to the pile instead of silently deleting it during
+	// cleanup; completed-round state must conserve every physical card.
+	if g.Drawn != nil {
+		g.Deck = append(g.Deck, *g.Drawn)
+	}
 	g.Drawn = nil
 	g.Reveal = nil
 	g.Gift = nil

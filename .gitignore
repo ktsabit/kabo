@@ -1,6 +1,8 @@
 node_modules/
 client/node_modules/
 client/dist/
+client/test-results/
+client/playwright-report/
 .env
 .env.local
 server/cambio-server

@@ -140,6 +140,68 @@ func TestTurnTimeoutAutoDiscardsDrawnCard(t *testing.T) {
 	}
 }
 
+func TestDisconnectedPlayerIsImmediatelySkippedBeforeDrawing(t *testing.T) {
+	g := startedGame(t)
+	if g.currentPlayerID() != "a" || g.Phase != PhaseAwaitDraw {
+		t.Fatalf("unexpected starting turn: phase=%s current=%s", g.Phase, g.currentPlayerID())
+	}
+	g.Disconnect("a")
+	if g.currentPlayerID() != "b" || g.Phase != PhaseAwaitDraw {
+		t.Fatalf("disconnected draw turn was not skipped: phase=%s current=%s", g.Phase, g.currentPlayerID())
+	}
+}
+
+func TestDisconnectAfterDrawingWaitsForNormalResolution(t *testing.T) {
+	g := startedGame(t)
+	g.Deck[len(g.Deck)-1] = Card{ID: "disconnect-timeout", Rank: 4, Suit: Clubs}
+	if err := g.Apply("a", ClientMessage{Type: "draw"}); err != nil {
+		t.Fatal(err)
+	}
+	drawn := g.Drawn
+	g.Disconnect("a")
+	if g.currentPlayerID() != "a" || g.Phase != PhaseAwaitChoice || g.Drawn != drawn {
+		t.Fatalf("in-progress draw was skipped unsafely: phase=%s current=%s drawn=%+v", g.Phase, g.currentPlayerID(), g.Drawn)
+	}
+	if err := g.Timeout(); err != nil {
+		t.Fatal(err)
+	}
+	if g.currentPlayerID() != "b" || g.Phase != PhaseAwaitDraw || g.Drawn != nil {
+		t.Fatalf("normal timeout did not recover disconnected draw: phase=%s current=%s drawn=%+v", g.Phase, g.currentPlayerID(), g.Drawn)
+	}
+}
+
+func TestRoundEndPreservesAnInFlightDrawnCard(t *testing.T) {
+	g := startedGame(t)
+	g.Deck[len(g.Deck)-1] = Card{ID: "in-flight-at-end", Rank: 6, Suit: Hearts}
+	if err := g.Apply("a", ClientMessage{Type: "draw"}); err != nil {
+		t.Fatal(err)
+	}
+	deckBeforeEnd := len(g.Deck)
+	g.end("draw_pile_exhausted")
+	if g.Drawn != nil || len(g.Deck) != deckBeforeEnd+1 || g.Deck[len(g.Deck)-1].ID != "in-flight-at-end" {
+		t.Fatalf("round end lost the in-flight card: drawn=%+v deck=%d top=%+v", g.Drawn, len(g.Deck), g.Deck[len(g.Deck)-1])
+	}
+}
+
+func TestFinishTurnSkipsDisconnectedPlayersInRotation(t *testing.T) {
+	g := New("room", rand.New(rand.NewSource(17)))
+	for _, player := range []struct{ id, name string }{{"a", "Ada"}, {"b", "Ben"}, {"c", "Cleo"}} {
+		_, _ = g.AddOrReconnect(player.id, player.name)
+	}
+	readyPlayers(t, g, "a", "b", "c")
+	if err := g.Apply("a", ClientMessage{Type: "start_game"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Timeout(); err != nil {
+		t.Fatal(err)
+	}
+	g.Disconnect("b")
+	g.finishTurn()
+	if g.currentPlayerID() != "c" || g.Phase != PhaseAwaitDraw {
+		t.Fatalf("rotation stopped on disconnected player: phase=%s current=%s", g.Phase, g.currentPlayerID())
+	}
+}
+
 func TestPowerAndRevealTimeoutsAdvanceTheTurn(t *testing.T) {
 	g := startedGame(t)
 	g.Phase = PhaseAwaitSelfPeek

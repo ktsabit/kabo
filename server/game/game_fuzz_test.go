@@ -1,6 +1,7 @@
 package game
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 )
@@ -24,11 +25,12 @@ func FuzzRapidOverlappingActions(f *testing.F) {
 
 		g := startedGame(t)
 		seedRapidSlap(g, data)
-		assertPublicState(t, g)
+		expectedCards := totalGameCards(g)
+		assertPublicState(t, g, expectedCards)
 
 		for step, value := range data {
 			runFuzzStep(g, value, step)
-			assertPublicState(t, g)
+			assertPublicState(t, g, expectedCards)
 			if gPhase(g) == PhaseEnded {
 				break
 			}
@@ -178,7 +180,7 @@ func applyBurst(g *Game, requests []fuzzRequest) {
 
 func fuzzDrawCard(step int, value byte) Card {
 	ranks := [...]int{2, 7, 9, 11, 13}
-	return Card{ID: "fuzz-draw", Rank: ranks[(step+int(value))%len(ranks)], Suit: Clubs}
+	return Card{ID: fmt.Sprintf("fuzz-draw-%d", step), Rank: ranks[(step+int(value))%len(ranks)], Suit: Clubs}
 }
 
 func occupiedRefs(g *Game) []CardRef {
@@ -224,10 +226,34 @@ func gPhase(g *Game) Phase {
 	return g.Phase
 }
 
-func assertPublicState(t *testing.T, g *Game) {
+func totalGameCards(g *Game) int {
+	g.Lock()
+	defer g.Unlock()
+	return countGameCards(g)
+}
+
+func countGameCards(g *Game) int {
+	total := len(g.Deck) + len(g.Discard)
+	if g.Drawn != nil {
+		total++
+	}
+	for _, player := range g.Players {
+		for _, card := range player.Cards {
+			if card != nil {
+				total++
+			}
+		}
+	}
+	return total
+}
+
+func assertPublicState(t *testing.T, g *Game, expectedCards int) {
 	t.Helper()
 	g.Lock()
 	defer g.Unlock()
+	if total := countGameCards(g); total != expectedCards {
+		t.Fatalf("card conservation failed during overlapping actions: got=%d want=%d", total, expectedCards)
+	}
 
 	if g.Action != nil && (g.Action.ID <= 0 || g.Action.ID != g.ActionEventID) {
 		t.Fatalf("action cursor mismatch: action=%+v cursor=%d", g.Action, g.ActionEventID)

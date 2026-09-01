@@ -5,7 +5,7 @@ A playable, server-authoritative Kabo card game. It runs as a normal web app for
 ## What is implemented
 
 - Two to eight active players in in-memory rooms, with read-only spectators who can queue for the next round.
-- Four face-down cards per player, shown as a compact horizontal hand that closes gaps after cards leave.
+- Four face-down cards per player in a stable two-row hand that expands to the right and closes same-row gaps with a visible horizontal slide.
 - Draw, replace, or discard turns.
 - 7/8 own peek, 9/10 opponent peek, J/Q any-two-card swap, and K opponent peek followed by any-two-card swap.
 - Server-ordered slap races for every new discard. The first valid slap wins; later stale or incorrect slaps add a penalty and show the card briefly to everyone.
@@ -14,7 +14,7 @@ A playable, server-authoritative Kabo card game. It runs as a normal web app for
 - Full scoring, including Jokers at 0 and red Kings at −1.
 - Private per-player snapshots: unrevealed card values never reach other browsers.
 - Discord OAuth code exchange, opaque game sessions, Activity `instanceId` rooms, and optional Activity Instance API validation.
-- Reconnect support for the same player identity and ready-gated rematches.
+- Reconnect support for the same player identity, recovery from interrupted animations, disconnected-turn skipping before draw, and ready-gated rematches.
 - Mid-round spectators, a compact next-round roster capped at eight, and automatic promotion into the next round.
 - Lobby readiness checks for every selected player, with the previous round's winner starting the next round.
 - Configurable server deadlines: 15 seconds for turn phases and 3 seconds for reveal acknowledgement by default; a drawn card is discarded automatically when possible, otherwise the turn advances.
@@ -57,7 +57,9 @@ Run verification with:
 ```bash
 npm --prefix client run build
 npm --prefix client test
+npm --prefix client run test:responsive
 cd server && go test ./...
+cd server && go test ./game -run=^$ -fuzz=FuzzRapidOverlappingActions -fuzztime=5s
 ```
 
 ## Production deployment
