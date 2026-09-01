@@ -198,7 +198,7 @@ function App() {
           return;
         }
         if (message.type === "error") {
-          if (message.code === "wrong_slap") return;
+          if (message.code === "wrong_slap" || message.message.startsWith("action is not available during")) return;
           setProblem(message.message);
           window.setTimeout(() => setProblem(undefined), 3200);
         } else {
@@ -930,13 +930,15 @@ async function animateReplace(action: ActionView, targetRef: CardRef, target: Ac
   const discardDestination = liveDiscardRect();
   if (!targetDestination || !discardDestination) return;
   const releaseDiscard = pinActionCard(discard);
+  const observerAlreadySeesBack = drawn.element.matches(".card-back")
+    || (Boolean(drawn.element.querySelector(".card-back")) && !drawn.element.querySelector(".playing-card"));
   try {
     await Promise.all([
       // Keep the outgoing card covering the old discard until the incoming
       // card has also finished. Otherwise the old discard flashes back for a
       // few frames between the two independent animations.
       flyCard(target.element, target.rect, discardDestination, -30, 0, 855, action.card),
-      flyCard(drawn.element, drawn.rect, targetDestination, 34, 95, 760, undefined, true),
+      flyCard(drawn.element, drawn.rect, targetDestination, 34, 95, 760, undefined, !observerAlreadySeesBack),
     ]);
   } finally {
     releaseDiscard();
