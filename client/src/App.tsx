@@ -79,8 +79,9 @@ function App() {
     }
     if (action.id <= lastActionID.current) return;
     lastActionID.current = action.id;
+    const geometry = captureActionGeometry(action);
     document.documentElement.classList.add("action-in-flight");
-    actionQueue.current.push({ action, geometry: captureActionGeometry(action) });
+    actionQueue.current.push({ action, geometry });
     // Keep the UI responsive if a reconnect or a burst of slaps delivers a lot
     // of authoritative actions at once. The latest state is already rendered;
     // old movement animations are only visual history.
@@ -174,9 +175,11 @@ function App() {
     const exists = swapSelection.some((item) => sameRef(item, target));
     const next = exists ? swapSelection.filter((item) => !sameRef(item, target)) : [...swapSelection, target].slice(-2);
     setSwapSelection(next);
-    if (next.length === 2) {
-      send({ type: "swap", first: next[0], second: next[1] });
-    }
+  };
+
+  const confirmSwap = () => {
+    if (!snapshot || snapshot.phase !== "await_swap" || snapshot.currentPlayerId !== snapshot.you.id || swapSelection.length !== 2) return;
+    send({ type: "swap", first: swapSelection[0], second: swapSelection[1] });
   };
 
   const cardAction = (target: CardRef) => {
@@ -316,6 +319,13 @@ function App() {
                 </div>
               </div>
               <TurnPrompt snapshot={snapshot} isMyTurn={isMyTurn} />
+              {isMyTurn && snapshot.phase === "await_swap" && swapSelection.length > 0 && (
+                <div className="swap-controls" aria-label="Swap selection controls">
+                  <span>{swapSelection.length}/2</span>
+                  <button className="swap-clear" onClick={() => setSwapSelection([])}>Clear</button>
+                  <button className="primary-button swap-confirm" disabled={swapSelection.length !== 2} onClick={confirmSwap}>Confirm swap</button>
+                </div>
+              )}
             </div>
 
             {me && (
@@ -478,12 +488,19 @@ function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInit
 
   const handleTap = (target: CardRef) => {
     if (dragging.current || !canInteract) return;
+    if (snapshot.phase === "await_swap" && snapshot.currentPlayerId === snapshot.you.id) {
+      if (tap.current?.timer) window.clearTimeout(tap.current.timer);
+      tap.current = undefined;
+      onCard(target);
+      return;
+    }
     const key = refKey(target);
     const now = Date.now();
     if (tap.current?.key === key && now - tap.current.at < DOUBLE_TAP_WINDOW) {
       if (tap.current.timer) window.clearTimeout(tap.current.timer);
       tap.current = undefined;
-      onSlap(target);
+      if (snapshot.phase === "await_swap" && snapshot.currentPlayerId === snapshot.you.id) onCard(target);
+      else onSlap(target);
       return;
     }
     if (tap.current?.timer) window.clearTimeout(tap.current.timer);
@@ -500,10 +517,10 @@ function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInit
   };
 
   const initialRevealHere = mine && snapshot.reveal?.kind === "initial";
-  const hasOpponentPeekReveal = !mine && snapshot.reveal?.kind !== "initial" && Boolean(snapshot.reveal?.cards.some((item) => item.target.playerId === player.id));
+  const hasPeekReveal = snapshot.reveal?.kind !== "initial" && Boolean(snapshot.reveal?.cards.some((item) => item.target.playerId === player.id));
   const winner = snapshot.phase === "ended" && snapshot.winnerIds?.includes(player.id);
   return (
-    <section ref={area} data-player-id={player.id} style={style} className={`player-area ${mine ? "mine" : ""} ${active ? "active" : ""} ${winner ? "winner" : ""} ${hasOpponentPeekReveal ? "has-peek-reveal" : ""} ${snapshot.phase === "ended" ? "cards-revealed" : ""} ${snapshot.phase === "await_choice" && mine ? "replace-mode" : ""}`}>
+    <section ref={area} data-player-id={player.id} style={style} className={`player-area ${mine ? "mine" : ""} ${active ? "active" : ""} ${winner ? "winner" : ""} ${hasPeekReveal ? "has-peek-reveal" : ""} ${snapshot.phase === "ended" ? "cards-revealed" : ""} ${snapshot.phase === "await_choice" && mine ? "replace-mode" : ""}`}>
       <div className="player-heading">
         <span className={`avatar avatar-${hash(player.id) % 5}`}>{player.name.slice(0, 1).toUpperCase()}</span>
         <div><b>{mine ? "You" : player.name}</b>{snapshot.phase === "ended" ? <small>{player.score} pts</small> : !player.connected && <small>Disconnected</small>}</div>
@@ -524,11 +541,11 @@ function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInit
           const selectionOrder = selected.findIndex((item) => sameRef(item, target)) + 1;
           const isSelected = selectionOrder > 0;
           const revealed = revealAt(snapshot, target);
-          const opponentPeekReveal = !mine && Boolean(revealed && snapshot.reveal?.kind !== "initial");
+          const peekReveal = Boolean(revealed && snapshot.reveal?.kind !== "initial");
           const power = canInteract ? powerHint(snapshot, target, slot.occupied) : undefined;
           const peekedByOther = snapshot.publicPeek?.viewerId !== snapshot.you.id && snapshot.publicPeek && sameRef(snapshot.publicPeek.target, target);
           return (
-            <div className={`slot-wrap ${!slot.occupied ? "empty-slot-anchor" : ""} ${isSelected ? "selected" : ""} ${revealed ? "is-revealed" : ""} ${opponentPeekReveal ? "opponent-peek-reveal" : ""} ${peekedByOther ? "peek-observed" : ""} ${power ? `power-target power-${power}` : ""}`} key={slot.slot} data-card-ref={refKey(target)}>
+            <div className={`slot-wrap ${!slot.occupied ? "empty-slot-anchor" : ""} ${isSelected ? "selected" : ""} ${revealed ? "is-revealed" : ""} ${peekReveal ? "peek-reveal" : ""} ${peekedByOther ? "peek-observed" : ""} ${power ? `power-target power-${power}` : ""}`} key={slot.slot} data-card-ref={refKey(target)}>
               <button
                 className="card-button"
                 disabled={!slot.occupied || !canInteract}
@@ -604,7 +621,6 @@ function PlayingCard({ card, compact = false, flipped = false }: { card: Card; c
       <Suspense fallback={<span className="card-face-loading" />}>
         <Face title={cardLabel(card)} width="100%" height="100%" />
       </Suspense>
-      {card.rank === 13 && isRed(card) && <em className="score-badge">−1</em>}
     </div>
   );
 }
@@ -722,24 +738,42 @@ async function animateReplace(action: ActionView, targetRef: CardRef, target: Ac
   const targetDestination = liveCardRect(targetRef);
   const discardDestination = liveDiscardRect();
   if (!targetDestination || !discardDestination) return;
-  await Promise.all([
-    flyCard(target.element, target.rect, discardDestination, -30, 0, 680, action.card),
-    flyCard(drawn.element, drawn.rect, targetDestination, 34, 95, 760, undefined, true),
+  const restore = hideElements([
+    liveCardElement(targetRef),
+    liveDiscardElement(),
   ]);
+  try {
+    await Promise.all([
+      flyCard(target.element, target.rect, discardDestination, -30, 0, 680, action.card),
+      flyCard(drawn.element, drawn.rect, targetDestination, 34, 95, 760, undefined, true),
+    ]);
+  } finally {
+    restore();
+  }
 }
 
 async function animateDiscard(action: ActionView, _discard: ActionAnchor, drawn: ActionAnchor): Promise<void> {
   await waitForLayout();
   const discardDestination = liveDiscardRect();
   if (!discardDestination) return;
-  await flyCard(drawn.element, drawn.rect, discardDestination, -22, 0, 620, action.card);
+  const restore = hideElements([liveDiscardElement()]);
+  try {
+    await flyCard(drawn.element, drawn.rect, discardDestination, -22, 0, 620, action.card);
+  } finally {
+    restore();
+  }
 }
 
 async function animateSlap(action: ActionView, target: ActionAnchor, _discard: ActionAnchor): Promise<void> {
   await waitForLayout();
   const discardDestination = liveDiscardRect();
   if (!discardDestination) return;
-  await flyCard(target.element, target.rect, discardDestination, -38, 0, 680, action.card);
+  const restore = hideElements([liveDiscardElement()]);
+  try {
+    await flyCard(target.element, target.rect, discardDestination, -38, 0, 680, action.card);
+  } finally {
+    restore();
+  }
 }
 
 function animateWrongSlap(action: ActionView, geometry: ActionGeometry): Promise<void> {
@@ -838,7 +872,12 @@ async function animateGift(targetRef: CardRef, source: ActionAnchor): Promise<vo
   await waitForLayout();
   const destination = liveCardRect(targetRef);
   if (!destination) return;
-  await flyCard(source.element, source.rect, destination, 28, 0, 720);
+  const restore = hideElements([liveCardElement(targetRef)]);
+  try {
+    await flyCard(source.element, source.rect, destination, 28, 0, 720);
+  } finally {
+    restore();
+  }
 }
 
 function flyCard(card: HTMLElement, from: DOMRect, to: DOMRect, arc: number, delay: number, duration: number, face?: Card, flipToBack = false): Promise<void> {
@@ -927,14 +966,26 @@ function waitForLayout(): Promise<void> {
 }
 
 function liveCardRect(target: CardRef): DOMRect | undefined {
+  return liveCardElement(target)?.getBoundingClientRect();
+}
+
+function liveCardElement(target: CardRef): HTMLElement | undefined {
   const slot = slotFor(target);
-  const element = slot?.querySelector<HTMLElement>(".playing-card, .card-back") ?? slot;
-  return element?.getBoundingClientRect();
+  return slot?.querySelector<HTMLElement>(".playing-card, .card-back, .empty-slot") ?? slot;
+}
+
+function liveDiscardElement(): HTMLElement | undefined {
+  return document.querySelector<HTMLElement>(".discard-wrap .playing-card, .discard-wrap .card-back, .discard-wrap .empty-discard") ?? undefined;
 }
 
 function liveDiscardRect(): DOMRect | undefined {
-  const element = document.querySelector<HTMLElement>(".discard-wrap .playing-card, .discard-wrap .card-back, .discard-wrap .empty-discard");
-  return element?.getBoundingClientRect();
+  return liveDiscardElement()?.getBoundingClientRect();
+}
+
+function hideElements(elements: Array<HTMLElement | undefined>): () => void {
+  const visible = [...new Set(elements.filter((element): element is HTMLElement => Boolean(element)))];
+  visible.forEach((element) => element.classList.add("action-visual-hidden"));
+  return () => visible.forEach((element) => element.classList.remove("action-visual-hidden"));
 }
 
 function hideCardButtons(targets: CardRef[]): () => void {
