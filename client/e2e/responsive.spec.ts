@@ -126,6 +126,16 @@ test("eight-player table keeps all critical controls reachable", async ({ page }
     await page.goto(`/?room=${room}&user=p0&name=Player%200`);
     await expect(page.locator(".game-surface.table-layout")).toBeVisible();
     await expect(page.locator(".reconnect-banner")).toBeHidden();
+    const firstHand = page.locator(".player-area").first().locator(".card-row");
+    await expect(firstHand).toHaveCount(1);
+    await page.getByRole("button", { name: "Switch to grid hand layout" }).click();
+    await expect(firstHand).toHaveCount(2);
+    await page.reload();
+    await expect(page.locator(".game-surface.table-layout")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Switch to strip hand layout" })).toBeVisible();
+    await expect(page.locator(".player-area").first().locator(".card-row")).toHaveCount(2);
+    await page.getByRole("button", { name: "Switch to strip hand layout" }).click();
+    await expect(page.locator(".player-area").first().locator(".card-row")).toHaveCount(1);
     for (const viewport of matrix) {
       await test.step(viewport.name, async () => {
         await page.setViewportSize(viewport);

@@ -17,6 +17,7 @@ import { ActionSequence } from "./actionSequence";
 import { initializePlatform, type PlatformSession, websocketURL } from "./platform";
 
 type ConnectionState = "connecting" | "open" | "closed";
+type HandLayout = "strip" | "grid";
 
 type ActionAnchor = {
   element: HTMLElement;
@@ -37,7 +38,16 @@ type ActionVisualHold = {
 };
 
 const DOUBLE_TAP_WINDOW = 360;
+const HAND_LAYOUT_STORAGE_KEY = "kabo-hand-layout";
 const activeActionAnimations = new Set<Animation>();
+
+function savedHandLayout(): HandLayout {
+  try {
+    return window.localStorage.getItem(HAND_LAYOUT_STORAGE_KEY) === "grid" ? "grid" : "strip";
+  } catch {
+    return "strip";
+  }
+}
 
 function actionAnimate(element: Element, keyframes: Keyframe[] | PropertyIndexedKeyframes, options?: number | KeyframeAnimationOptions) {
   const animation = element.animate(keyframes, options);
@@ -63,6 +73,7 @@ function App() {
   const [notice, setNotice] = useState<string>();
   const [swapSelection, setSwapSelection] = useState<CardRef[]>([]);
   const [actionAnimating, setActionAnimating] = useState(false);
+  const [handLayout, setHandLayout] = useState<HandLayout>(savedHandLayout);
   const socket = useRef<WebSocket | undefined>(undefined);
   const renderedSnapshot = useRef<SnapshotMessage | undefined>(undefined);
   const latestSnapshot = useRef<SnapshotMessage | undefined>(undefined);
@@ -355,18 +366,37 @@ function App() {
   const loserNames = snapshot.players.filter((player) => snapshot.loserIds?.includes(player.id)).map((player) => player.name);
   const showingAftermath = snapshot.phase === "ended" && !actionAnimating;
   const tableLocked = connection !== "open" || actionAnimating;
+  const toggleHandLayout = () => {
+    const next = handLayout === "strip" ? "grid" : "strip";
+    setHandLayout(next);
+    try {
+      window.localStorage.setItem(HAND_LAYOUT_STORAGE_KEY, next);
+    } catch {
+      // The preference remains active for this session when storage is unavailable.
+    }
+  };
 
   return (
     <main className="app-shell">
       <header className="topbar">
         <div className="room-chip">Table <b>{platform.roomId.slice(-8)}</b></div>
         <div className="topbar-actions">
+          {snapshot.phase !== "lobby" && (
+            <button
+              className="ghost-button hand-layout-toggle"
+              onClick={toggleHandLayout}
+              aria-label={`Switch to ${handLayout === "strip" ? "grid" : "strip"} hand layout`}
+              title={`Hand layout: ${handLayout === "strip" ? "single-row strip" : "two-row grid"}`}
+            >
+              {handLayout === "strip" ? "1×N" : "2×N"}
+            </button>
+          )}
           {snapshot.phase !== "lobby" && snapshot.phase !== "ended" && <NextRoundRoster snapshot={snapshot} send={send} />}
           {platform.mode === "browser" && <button className="ghost-button" onClick={copyInvite}>Invite</button>}
         </div>
       </header>
 
-      <section className={`game-surface ${snapshot.phase !== "lobby" ? "table-layout" : ""} ${showingAftermath ? "round-ended" : ""}`}>
+      <section className={`game-surface ${snapshot.phase !== "lobby" ? `table-layout hands-${handLayout}` : ""} ${showingAftermath ? "round-ended" : ""}`}>
         {snapshot.phase === "lobby" ? (
           <Lobby snapshot={snapshot} platform={platform} send={send} />
         ) : (
@@ -377,6 +407,7 @@ function App() {
                   key={player.id}
                   style={uSeatStyle(index, opponents.length)}
                   player={player}
+                  handLayout={handLayout}
                   snapshot={snapshot}
                   selected={swapSelection}
                   onCard={cardAction}
@@ -439,7 +470,7 @@ function App() {
 
             {me && (
               <div className="my-area">
-                <PlayerArea player={me} snapshot={snapshot} selected={swapSelection} onCard={cardAction} onSlap={slap} onGift={(slot) => send({ type: "gift", sourceSlot: slot })} onInitialDone={() => send({ type: "acknowledge_initial" })} mine canInteract={!tableLocked && snapshot.phase !== "ended"} revealEnded={showingAftermath} />
+                <PlayerArea player={me} handLayout={handLayout} snapshot={snapshot} selected={swapSelection} onCard={cardAction} onSlap={slap} onGift={(slot) => send({ type: "gift", sourceSlot: slot })} onInitialDone={() => send({ type: "acknowledge_initial" })} mine canInteract={!tableLocked && snapshot.phase !== "ended"} revealEnded={showingAftermath} />
                 {isMyTurn && snapshot.phase === "await_draw" && (
                   <button className="kabo-button" disabled={tableLocked} onClick={() => send({ type: "call_end" })}>KABO!</button>
                 )}
@@ -572,8 +603,9 @@ function RoundSummary({ snapshot, winners, losers, send, canStart }: { snapshot:
   );
 }
 
-function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInitialDone, style, mine = false, canInteract = true, revealEnded = true }: {
+function PlayerArea({ player, handLayout, snapshot, selected, onCard, onSlap, onGift, onInitialDone, style, mine = false, canInteract = true, revealEnded = true }: {
   player: PlayerView;
+  handLayout: HandLayout;
   snapshot: SnapshotMessage;
   selected: CardRef[];
   onCard: (target: CardRef) => void;
@@ -647,9 +679,11 @@ function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInit
   const hasPeekReveal = snapshot.reveal?.kind !== "initial" && Boolean(snapshot.reveal?.cards.some((item) => item.target.playerId === player.id));
   const penaltyPending = snapshot.phase !== "ended" && snapshot.action?.kind === "wrong_slap" && snapshot.action.actorId === player.id;
   const winner = revealEnded && snapshot.phase === "ended" && snapshot.winnerIds?.includes(player.id);
-  const arrangedRows = [0, 1].map((row) => player.cards
-    .filter((slot) => handVisualRow(slot.slot) === row)
-    .sort((a, b) => handVisualColumn(a.slot) - handVisualColumn(b.slot)));
+  const arrangedRows = handLayout === "strip"
+    ? [[...player.cards].sort((a, b) => a.slot - b.slot)]
+    : [0, 1].map((row) => player.cards
+      .filter((slot) => handVisualRow(slot.slot) === row)
+      .sort((a, b) => handVisualColumn(a.slot) - handVisualColumn(b.slot)));
   return (
     <section ref={area} data-player-id={player.id} style={style} className={`player-area ${mine ? "mine" : ""} ${active ? "active" : ""} ${!player.connected ? "disconnected" : ""} ${winner ? "winner" : ""} ${hasPeekReveal ? "has-peek-reveal" : ""} ${revealEnded && snapshot.phase === "ended" ? "cards-revealed" : ""} ${snapshot.phase === "await_choice" && mine ? "replace-mode" : ""}`}>
       <div className="player-heading">
