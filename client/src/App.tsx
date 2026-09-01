@@ -847,7 +847,7 @@ function uSeatStyle(index: number, total: number): CSSProperties {
   const spread = total <= 1 ? 0 : total === 2 ? 36 : total === 3 ? 64 : 84;
   const x = total <= 1 ? 50 : 50 - spread / 2 + (spread * index) / (total - 1);
   const edge = Math.abs(x - 50) / Math.max(spread / 2, 1);
-  const y = 6 + 39 * edge ** 1.55;
+  const y = 20 + 25 * edge ** 1.55;
   const scale = total <= 4 ? 1 : total <= 6 ? .82 : .7;
   return { "--u-x": `${x}%`, "--u-y": `${y}%`, "--u-scale": scale } as CSSProperties;
 }
@@ -912,13 +912,23 @@ async function animateSwap(firstRef: CardRef, secondRef: CardRef, first: ActionA
   if (!firstDestination || !secondDestination) return;
   const distance = Math.hypot(secondDestination.left - first.rect.left, secondDestination.top - first.rect.top);
   const swapArc = Math.min(96, Math.max(48, distance * .16));
-  // The real card backs stay visible throughout. The flying backs merge into
-  // identical destinations, avoiding a hidden -> visible landing frame that
-  // looked like a back-to-back flip to observers.
-  await Promise.all([
-    flyCard(cardBackElement(), first.rect, secondDestination, -swapArc, 0, 760, undefined, false, 0, "swap-card-flight"),
-    flyCard(cardBackElement(), second.rect, firstDestination, swapArc, 0, 760, undefined, false, 0, "swap-card-flight"),
-  ]);
+  const restoreCards = hideElements([liveCardElement(firstRef), liveCardElement(secondRef)]);
+  let arrivals = 0;
+  let restored = false;
+  const revealUnderFlights = () => {
+    arrivals += 1;
+    if (arrivals < 2 || restored) return;
+    restored = true;
+    restoreCards();
+  };
+  try {
+    await Promise.all([
+      flyCard(cardBackElement(), first.rect, secondDestination, -swapArc, 0, 760, undefined, false, 0, "swap-card-flight", { holdAtDestination: 90, beforeRemove: revealUnderFlights }),
+      flyCard(cardBackElement(), second.rect, firstDestination, swapArc, 0, 760, undefined, false, 0, "swap-card-flight", { holdAtDestination: 90, beforeRemove: revealUnderFlights }),
+    ]);
+  } finally {
+    if (!restored) restoreCards();
+  }
 }
 
 function cardBackElement(): HTMLElement {

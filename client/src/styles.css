@@ -99,6 +99,7 @@ button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 .player-heading { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 8px; }
 .player-heading > div { display: flex; flex-direction: column; min-width: 0; }
 .player-heading b { max-width: clamp(96px, 15vw, 190px); overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.opponents-1 .player-heading b { max-width: min(68vw, 420px); }
 .player-heading small { color: var(--muted); font-size: 10px; }
 .looking-indicator { position: relative; width: 25px; height: 15px; flex: 0 0 auto; border-radius: 65% 35% 65% 35%; transform: rotate(45deg); background: rgba(169,176,255,.2); box-shadow: 0 0 16px rgba(169,176,255,.28); }
 .looking-indicator i { position: absolute; left: 50%; top: 50%; width: 7px; height: 7px; border-radius: 50%; background: #d7dafe; box-shadow: 0 0 0 2px #5964e4; animation: looking-around 1.8s ease-in-out infinite; }
