@@ -17,7 +17,7 @@ A playable, server-authoritative Kabo card game. It runs as a normal web app for
 - Reconnect support for the same player identity, recovery from interrupted animations, disconnected-turn skipping before draw, and ready-gated rematches.
 - Mid-round spectators, a compact next-round roster capped at eight, and automatic promotion into the next round.
 - Lobby readiness checks for every selected player, with the previous round's winner starting the next round.
-- Configurable server deadlines: 15 seconds for turn phases and 3 seconds for reveal acknowledgement by default; a drawn card is discarded automatically when possible, otherwise the turn advances.
+- Configurable server deadlines: 30 seconds for the opening peek, 15 seconds for turn phases, and 3 seconds for reveal acknowledgement by default; a drawn card is discarded automatically when possible, otherwise the turn advances.
 - SQLite round history with player scores, winners, losers, Kabo callers, and failed Kabo calls.
 - Flowing power/discard indicators, queued slap animations, face-up late/wrong slap penalty flights, and a responsive table shell for narrow or short Discord viewports.
 
@@ -92,7 +92,7 @@ docker run --rm -p 8080:8080 \
   kabo
 ```
 
-Choose a Docker host that provides a public HTTPS domain, forwards WebSocket upgrades, keeps one process alive, and sends traffic to port 8080. Keep this MVP at exactly **one replica** with no scale-to-zero: live rooms and sessions are in memory, so restarts erase active games and multiple replicas would split players unless Redis or a durable room service is added first. Set `DB_PATH`, `KABO_TURN_TIMEOUT`, and `KABO_REVEAL_TIMEOUT` in Compose when needed.
+Choose a Docker host that provides a public HTTPS domain, forwards WebSocket upgrades, keeps one process alive, and sends traffic to port 8080. Keep this MVP at exactly **one replica** with no scale-to-zero: live rooms and sessions are in memory, so restarts erase active games and multiple replicas would split players unless Redis or a durable room service is added first. Set `DB_PATH`, `KABO_INITIAL_TIMEOUT`, `KABO_TURN_TIMEOUT`, and `KABO_REVEAL_TIMEOUT` in Compose when needed.
 
 ### Cloudflare hosting
 

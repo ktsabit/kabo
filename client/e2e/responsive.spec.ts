@@ -55,7 +55,7 @@ class RoomSocket {
   }
 }
 
-async function startedRoom(room: string, playerCount = 8) {
+async function startedRoom(room: string, playerCount = 8, acknowledgeInitial = true) {
   const clients = Array.from({ length: playerCount }, (_, index) => new RoomSocket(
     `ws://127.0.0.1:4174/ws?room=${room}&user=p${index}&name=Player%20${index}`,
   ));
@@ -65,6 +65,7 @@ async function startedRoom(room: string, playerCount = 8) {
   await clients[0].waitFor((snapshot) => snapshot.allReady === true);
   clients[0].send({ type: "start_game" });
   await clients[0].waitFor((snapshot) => snapshot.phase === "initial_peek");
+  if (!acknowledgeInitial) return clients;
   clients.forEach((client) => client.send({ type: "acknowledge_initial" }));
   await clients[0].waitFor((snapshot) => snapshot.phase === "await_draw");
   return clients;
@@ -173,6 +174,7 @@ test("round aftermath keeps ready and start controls reachable", async ({ page }
     await clients[0].waitFor((snapshot) => snapshot.phase === "ended");
     await page.goto(`/?room=${room}&user=p0&name=Player%200`);
     await expect(page.locator(".round-summary.next-round-lobby")).toBeVisible();
+    await expect(page.locator(".player-area")).toHaveCount(0);
     for (const viewport of matrix) {
       await test.step(viewport.name, async () => {
         await page.setViewportSize(viewport);
@@ -181,6 +183,33 @@ test("round aftermath keeps ready and start controls reachable", async ({ page }
         await expectNoViewportCropping(page);
       });
     }
+    await page.locator(".round-summary .ready-toggle").click();
+    clients[1].send({ type: "set_ready", ready: true });
+    await expect(page.getByRole("button", { name: "Play next round" })).toBeEnabled();
+    await page.getByRole("button", { name: "Play next round" }).click();
+    await expect(page.getByRole("dialog", { name: "Remember these cards" })).toBeVisible();
+  } finally {
+    clients.forEach((client) => client.close());
+  }
+});
+
+test("each player receives an explicit private opening peek and countdown", async ({ page }) => {
+  const room = `initial-${Date.now()}`;
+  const clients = await startedRoom(room, 2, false);
+  try {
+    await page.goto(`/?room=${room}&user=p0&name=Player%200`);
+    const modal = page.getByRole("dialog", { name: "Remember these cards" });
+    await expect(modal).toBeVisible();
+    await expect(modal.locator(".playing-card")).toHaveCount(2);
+    await expect(modal.locator(".card-back")).toHaveCount(0);
+    await expect(modal.locator(".playing-card").first()).not.toHaveAttribute("aria-label", "Face-down card");
+    await expect(modal.locator(".turn-countdown")).toContainText(/\d+s/);
+    await modal.getByRole("button", { name: "Ready to play" }).click();
+    await expect(modal).toBeHidden();
+    await clients[1].waitFor((snapshot) => snapshot.phase === "initial_peek" && snapshot.players?.find((player: any) => player.id === "p0")?.initialReady === true);
+    clients[1].send({ type: "acknowledge_initial" });
+    await clients[1].waitFor((snapshot) => snapshot.phase === "await_draw");
+    await expect(page.locator(".turn-prompt .turn-countdown")).toContainText(/\d+s/);
   } finally {
     clients.forEach((client) => client.close());
   }

@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import type {
@@ -408,24 +408,25 @@ function App() {
           <Lobby snapshot={snapshot} platform={platform} send={send} />
         ) : (
           <>
-            <div className={`opponents opponents-u opponents-${opponents.length}`} aria-label="Opponents">
-              {opponents.map((player, index) => (
-                <PlayerArea
-                  key={player.id}
-                  style={uSeatStyle(index, opponents.length)}
-                  player={player}
-                  handLayout={handLayout}
-                  snapshot={snapshot}
-                  selected={swapSelection}
-                  onCard={cardAction}
-                  onSlap={slap}
-                  onGift={(slot) => send({ type: "gift", sourceSlot: slot })}
-                  onInitialDone={() => send({ type: "acknowledge_initial" })}
-                  canInteract={!tableLocked && !isSpectator && snapshot.phase !== "ended"}
-                  revealEnded={showingAftermath}
-                />
-              ))}
-            </div>
+            {!showingAftermath && (
+              <div className={`opponents opponents-u opponents-${opponents.length}`} aria-label="Opponents">
+                {opponents.map((player, index) => (
+                  <PlayerArea
+                    key={player.id}
+                    style={uSeatStyle(index, opponents.length)}
+                    player={player}
+                    handLayout={handLayout}
+                    snapshot={snapshot}
+                    selected={swapSelection}
+                    onCard={cardAction}
+                    onSlap={slap}
+                    onGift={(slot) => send({ type: "gift", sourceSlot: slot })}
+                    canInteract={!tableLocked && !isSpectator && snapshot.phase !== "ended"}
+                    revealEnded={showingAftermath}
+                  />
+                ))}
+              </div>
+            )}
 
             <div className={`table-center slap-dropzone ${showingAftermath ? "aftermath-center" : ""}`} onDragOver={(event) => event.preventDefault()} onDrop={dropToSlap}>
               {showingAftermath ? (
@@ -475,9 +476,9 @@ function App() {
               )}
             </div>
 
-            {me && (
+            {me && !showingAftermath && (
               <div className="my-area">
-                <PlayerArea player={me} handLayout={handLayout} snapshot={snapshot} selected={swapSelection} onCard={cardAction} onSlap={slap} onGift={(slot) => send({ type: "gift", sourceSlot: slot })} onInitialDone={() => send({ type: "acknowledge_initial" })} mine canInteract={!tableLocked && snapshot.phase !== "ended"} revealEnded={showingAftermath} />
+                <PlayerArea player={me} handLayout={handLayout} snapshot={snapshot} selected={swapSelection} onCard={cardAction} onSlap={slap} onGift={(slot) => send({ type: "gift", sourceSlot: slot })} mine canInteract={!tableLocked && snapshot.phase !== "ended"} revealEnded={showingAftermath} />
                 {isMyTurn && snapshot.phase === "await_draw" && (
                   <button className="kabo-button" disabled={tableLocked} onClick={() => send({ type: "call_end" })}>KABO!</button>
                 )}
@@ -486,6 +487,10 @@ function App() {
           </>
         )}
       </section>
+
+      {snapshot.phase === "initial_peek" && snapshot.reveal?.kind === "initial" && (
+        <InitialPeekModal cards={snapshot.reveal.cards.map((item) => item.card)} deadlineAt={snapshot.deadlineAt} onDone={() => send({ type: "acknowledge_initial" })} />
+      )}
 
       {connection !== "open" && (
         <div className="reconnect-banner" role="status" aria-live="polite">
@@ -591,6 +596,7 @@ function RoundSummary({ snapshot, winners, losers, send, canStart }: { snapshot:
   const readyCount = players.filter((player) => player.ready).length;
   const starter = snapshot.nextStarterId ? rosterName(snapshot, snapshot.nextStarterId) : undefined;
   const canJoin = !snapshot.nextRoundJoined && !snapshot.nextRoundFull;
+  const waitingNames = players.filter((player) => !player.ready).map((player) => player.id === snapshot.you.id ? "you" : player.name);
   return (
     <div className="round-summary next-round-lobby">
       <span className="eyebrow">ROUND COMPLETE</span>
@@ -605,12 +611,29 @@ function RoundSummary({ snapshot, winners, losers, send, canStart }: { snapshot:
           <ReadyRoster snapshot={snapshot} send={send} />
         </>
       )}
-      {canStart ? <button className="primary-button" disabled={!snapshot.allReady} onClick={() => send({ type: "start_game" })}>{snapshot.allReady ? "Start" : "Ready up"}</button> : <small>Waiting for a player to start.</small>}
+      {canStart ? <button className="primary-button" disabled={!snapshot.allReady} onClick={() => send({ type: "start_game" })}>{snapshot.allReady ? "Play next round" : `Waiting for ${waitingNames.join(" & ")}`}</button> : <small>Waiting for a player to start.</small>}
     </div>
   );
 }
 
-function PlayerArea({ player, handLayout, snapshot, selected, onCard, onSlap, onGift, onInitialDone, style, mine = false, canInteract = true, revealEnded = true }: {
+function InitialPeekModal({ cards, deadlineAt, onDone }: { cards: Card[]; deadlineAt?: number; onDone: () => void }) {
+  return (
+    <div className="modal-backdrop initial-peek-backdrop">
+      <section className="reveal-modal initial-peek-modal" role="dialog" aria-modal="true" aria-labelledby="initial-peek-title">
+        <span className="eyebrow">PRIVATE PEEK</span>
+        <h2 id="initial-peek-title">Remember these cards</h2>
+        <div className="revealed-cards">
+          {cards.map((card) => <PlayingCard key={card.id} card={card} compact />)}
+        </div>
+        <p>Only you can see these two cards. They will close when you continue.</p>
+        <div className="initial-peek-countdown"><span>Closes in</span><TurnCountdown deadlineAt={deadlineAt} /></div>
+        <button className="primary-button initial-peek-done" onClick={onDone}>Ready to play</button>
+      </section>
+    </div>
+  );
+}
+
+function PlayerArea({ player, handLayout, snapshot, selected, onCard, onSlap, onGift, style, mine = false, canInteract = true, revealEnded = true }: {
   player: PlayerView;
   handLayout: HandLayout;
   snapshot: SnapshotMessage;
@@ -618,7 +641,6 @@ function PlayerArea({ player, handLayout, snapshot, selected, onCard, onSlap, on
   onCard: (target: CardRef) => void;
   onSlap: (target: CardRef) => void;
   onGift: (slot: number) => void;
-  onInitialDone: () => void;
   style?: CSSProperties;
   mine?: boolean;
   canInteract?: boolean;
@@ -682,7 +704,6 @@ function PlayerArea({ player, handLayout, snapshot, selected, onCard, onSlap, on
     tap.current = { key, at: now, timer };
   };
 
-  const initialRevealHere = mine && snapshot.reveal?.kind === "initial";
   const hasPeekReveal = snapshot.reveal?.kind !== "initial" && Boolean(snapshot.reveal?.cards.some((item) => item.target.playerId === player.id));
   const penaltyPending = snapshot.phase !== "ended" && snapshot.action?.kind === "wrong_slap" && snapshot.action.actorId === player.id;
   const winner = revealEnded && snapshot.phase === "ended" && snapshot.winnerIds?.includes(player.id);
@@ -714,7 +735,7 @@ function PlayerArea({ player, handLayout, snapshot, selected, onCard, onSlap, on
               const target = { playerId: player.id, slot: slot.slot };
               const selectionOrder = selected.findIndex((item) => sameRef(item, target)) + 1;
               const isSelected = selectionOrder > 0;
-              const revealed = revealAt(snapshot, target);
+              const revealed = snapshot.reveal?.kind === "initial" ? undefined : revealAt(snapshot, target);
               const peekReveal = Boolean(revealed && snapshot.reveal?.kind !== "initial");
               const power = canInteract ? powerHint(snapshot, target, slot.occupied) : undefined;
               const peekedByOther = snapshot.publicPeek?.viewerId !== snapshot.you.id && snapshot.publicPeek && sameRef(snapshot.publicPeek.target, target);
@@ -757,21 +778,22 @@ function PlayerArea({ player, handLayout, snapshot, selected, onCard, onSlap, on
           </div>
         ))}
       </div>
-      {initialRevealHere && <button className="reveal-done" onClick={onInitialDone}>Ready</button>}
     </section>
   );
 }
 
 function TurnPrompt({ snapshot, isMyTurn }: { snapshot: SnapshotMessage; isMyTurn: boolean }) {
   const canGift = snapshot.phase === "await_gift" && snapshot.pendingGift?.slapperId === snapshot.you.id;
-  if (!isMyTurn && !canGift) return null;
-  let prompt = "";
-  if (isMyTurn && snapshot.phase === "await_draw") prompt = "Draw";
-  if (isMyTurn && snapshot.phase === "await_choice") prompt = "Choose";
-  if (isMyTurn && (snapshot.phase === "await_self_peek" || snapshot.phase === "await_opponent_peek" || snapshot.phase === "await_king_peek")) prompt = "Peek";
-  if (isMyTurn && snapshot.phase === "await_swap") prompt = "Swap";
+  let action = "";
+  if (snapshot.phase === "await_draw") action = "Draw";
+  if (snapshot.phase === "await_choice") action = "Choose";
+  if (snapshot.phase === "await_self_peek" || snapshot.phase === "await_opponent_peek" || snapshot.phase === "await_king_peek") action = "Peek";
+  if (snapshot.phase === "await_swap") action = "Swap";
+  if (snapshot.phase === "await_gift") action = "Give";
+  if (!action) return null;
+  const activeName = snapshot.players.find((player) => player.id === snapshot.currentPlayerId)?.name ?? "Player";
+  let prompt = isMyTurn ? action : `${activeName} · ${action}`;
   if (canGift) prompt = "Give";
-  if (!prompt) return null;
   return <div className="turn-prompt"><span className={isMyTurn || canGift ? "pulse" : ""} /><b>{prompt}</b><TurnCountdown deadlineAt={snapshot.deadlineAt} /></div>;
 }
 
@@ -797,9 +819,7 @@ function PlayingCard({ card, compact = false, flipped = false }: { card: Card; c
   const Face = faceFor(card);
   return (
     <div className={`playing-card asset-card ${compact ? "compact" : ""} ${isRed(card) ? "red" : "black"} ${flipped ? "flip-in" : ""}`} aria-label={cardLabel(card)}>
-      <Suspense fallback={<span className="card-face-loading" />}>
-        <Face title={cardLabel(card)} width="100%" height="100%" />
-      </Suspense>
+      <Face title={cardLabel(card)} width="100%" height="100%" />
     </div>
   );
 }

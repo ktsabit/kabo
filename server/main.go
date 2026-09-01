@@ -40,8 +40,9 @@ func main() {
 	s := &server{
 		rooms: transport.NewManager(transport.ManagerConfig{
 			Timeouts: transport.TimeoutConfig{
-				Turn:   durationEnv("KABO_TURN_TIMEOUT", transport.DefaultTurnTimeout),
-				Reveal: durationEnv("KABO_REVEAL_TIMEOUT", transport.DefaultRevealTimeout),
+				Initial: durationEnv("KABO_INITIAL_TIMEOUT", transport.DefaultInitialTimeout),
+				Turn:    durationEnv("KABO_TURN_TIMEOUT", transport.DefaultTurnTimeout),
+				Reveal:  durationEnv("KABO_REVEAL_TIMEOUT", transport.DefaultRevealTimeout),
 			},
 			Results: results,
 		}),

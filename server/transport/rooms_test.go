@@ -33,7 +33,7 @@ func TestClientPushIgnoresClosedClient(t *testing.T) {
 }
 
 func TestConfiguredTurnTimeoutAdvancesRoomAndKeepsDeadlineInSync(t *testing.T) {
-	manager := NewManager(ManagerConfig{Timeouts: TimeoutConfig{Turn: 20 * time.Millisecond, Reveal: 10 * time.Millisecond}})
+	manager := NewManager(ManagerConfig{Timeouts: TimeoutConfig{Initial: 20 * time.Millisecond, Turn: 20 * time.Millisecond, Reveal: 10 * time.Millisecond}})
 	if _, err := manager.Join("room", "a", "Ada", nil); err != nil {
 		t.Fatal(err)
 	}

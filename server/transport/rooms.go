@@ -24,16 +24,21 @@ type Client struct {
 }
 
 type TimeoutConfig struct {
-	Turn   time.Duration
-	Reveal time.Duration
+	Initial time.Duration
+	Turn    time.Duration
+	Reveal  time.Duration
 }
 
 const (
-	DefaultTurnTimeout   = 15 * time.Second
-	DefaultRevealTimeout = 3 * time.Second
+	DefaultInitialTimeout = 30 * time.Second
+	DefaultTurnTimeout    = 15 * time.Second
+	DefaultRevealTimeout  = 3 * time.Second
 )
 
 func (c TimeoutConfig) normalized() TimeoutConfig {
+	if c.Initial <= 0 {
+		c.Initial = DefaultInitialTimeout
+	}
 	if c.Turn <= 0 {
 		c.Turn = DefaultTurnTimeout
 	}
@@ -215,7 +220,9 @@ func (r *Room) scheduleTimeoutLocked() {
 		return
 	}
 	duration := r.timeouts.Turn
-	if kind == game.TimerReveal {
+	if kind == game.TimerInitial {
+		duration = r.timeouts.Initial
+	} else if kind == game.TimerReveal {
 		duration = r.timeouts.Reveal
 	}
 	deadline := time.Now().Add(duration)

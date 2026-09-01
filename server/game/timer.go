@@ -3,9 +3,10 @@ package game
 import "fmt"
 
 const (
-	TimerNone   = "none"
-	TimerTurn   = "turn"
-	TimerReveal = "reveal"
+	TimerNone    = "none"
+	TimerInitial = "initial"
+	TimerTurn    = "turn"
+	TimerReveal  = "reveal"
 )
 
 // TimeoutKey identifies the phase/action that owns a deadline. It deliberately
@@ -26,6 +27,8 @@ func (g *Game) TimeoutKind() string {
 	switch g.Phase {
 	case PhaseLobby, PhaseEnded:
 		return TimerNone
+	case PhaseInitialPeek:
+		return TimerInitial
 	case PhaseRevealSelf, PhaseRevealOpponent, PhaseRevealKing:
 		return TimerReveal
 	default:

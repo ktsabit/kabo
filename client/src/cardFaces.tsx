@@ -1,8 +1,11 @@
-import { lazy, type ComponentType, type LazyExoticComponent, type SVGProps } from "react";
+import type { ComponentType, SVGProps } from "react";
+// The CC0 package publishes components but points to a missing type folder.
+// @ts-expect-error Missing declarations in @letele/playing-cards 0.1.0.
+import * as playingCardFaces from "@letele/playing-cards/dist/index.esm.js";
 import type { Card } from "../../shared/protocol";
 
 type FaceComponent = ComponentType<SVGProps<SVGSVGElement> & { title?: string }>;
-const cache = new Map<string, LazyExoticComponent<FaceComponent>>();
+const faces = playingCardFaces as Record<string, FaceComponent>;
 
 const suitPrefix = {
   clubs: "C",
@@ -26,16 +29,6 @@ export function faceName(card: Card): string {
   return `${suitPrefix[card.suit]}${rankSuffix(card.rank)}`;
 }
 
-export function faceFor(card: Card): LazyExoticComponent<FaceComponent> {
-  const name = faceName(card);
-  const existing = cache.get(name);
-  if (existing) return existing;
-  const component = lazy(async () => {
-    // The CC0 package publishes components but points to a missing type folder.
-    // @ts-expect-error Missing declarations in @letele/playing-cards 0.1.0.
-    const module = await import("@letele/playing-cards/dist/index.esm.js") as Record<string, FaceComponent>;
-    return { default: module[name] };
-  });
-  cache.set(name, component);
-  return component;
+export function faceFor(card: Card): FaceComponent {
+  return faces[faceName(card)];
 }
