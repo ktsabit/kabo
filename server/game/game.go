@@ -254,8 +254,9 @@ func (g *Game) resetRoundState() {
 	g.Deck = nil
 	g.Discard = nil
 	g.Drawn = nil
-	g.DiscardEventID = 0
-	g.ActionEventID = 0
+	// Both IDs are client-visible event cursors. Keep them monotonic across
+	// rounds so delayed messages from the previous round cannot be mistaken
+	// for the first discard/action of the new round.
 	g.InitialPending = map[string]bool{}
 	g.Reveal = nil
 	g.Action = nil

@@ -17,6 +17,8 @@ type Client struct {
 	conn     *websocket.Conn
 	send     chan []byte
 	close    sync.Once
+	sendMu   sync.Mutex
+	closed   bool
 }
 
 type Room struct {
@@ -109,7 +111,10 @@ func (r *Room) remove(client *Client) {
 		r.game.Disconnect(client.playerID)
 		r.game.Unlock()
 	}
+	client.sendMu.Lock()
+	client.closed = true
 	client.close.Do(func() { close(client.send) })
+	client.sendMu.Unlock()
 	r.mu.Unlock()
 	r.broadcast()
 }
@@ -130,9 +135,24 @@ func (r *Room) broadcast() {
 }
 
 func (c *Client) push(payload []byte) {
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	if c.closed {
+		return
+	}
 	select {
 	case c.send <- payload:
+		return
 	default:
-		// A stale client must not block the authoritative room loop.
+		// A stale client must not block the authoritative room loop. Drop the
+		// oldest queued message so the newest snapshot is always retained.
+		select {
+		case <-c.send:
+		default:
+		}
+		select {
+		case c.send <- payload:
+		default:
+		}
 	}
 }

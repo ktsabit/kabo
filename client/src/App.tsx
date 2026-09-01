@@ -25,6 +25,48 @@ function App() {
   const [swapSelection, setSwapSelection] = useState<CardRef[]>([]);
   const socket = useRef<WebSocket | undefined>(undefined);
   const lastActionID = useRef(0);
+  const actionQueue = useRef<ActionView[]>([]);
+  const animationRunning = useRef(false);
+  const animationPumpFrame = useRef<number | undefined>(undefined);
+
+  const pumpActionQueue = () => {
+    animationPumpFrame.current = undefined;
+    if (animationRunning.current) return;
+    const action = actionQueue.current.shift();
+    if (!action) return;
+
+    animationRunning.current = true;
+    void animateAction(action)
+      .catch((error: unknown) => console.error("Kabo action animation failed", error))
+      .finally(() => {
+        animationRunning.current = false;
+        if (actionQueue.current.length > 0) scheduleActionPump();
+      });
+  };
+
+  const scheduleActionPump = () => {
+    if (animationRunning.current || animationPumpFrame.current !== undefined) return;
+    animationPumpFrame.current = window.requestAnimationFrame(pumpActionQueue);
+  };
+
+  const queueAction = (action: ActionView) => {
+    // A process restart can recreate a room with fresh cursors. Do not let a
+    // stale local cursor suppress every action from the new server instance.
+    if (action.id < lastActionID.current) {
+      lastActionID.current = 0;
+      actionQueue.current.length = 0;
+    }
+    if (action.id <= lastActionID.current) return;
+    lastActionID.current = action.id;
+    actionQueue.current.push(action);
+    // Keep the UI responsive if a reconnect or a burst of slaps delivers a lot
+    // of authoritative actions at once. The latest state is already rendered;
+    // old movement animations are only visual history.
+    if (actionQueue.current.length > 8) {
+      actionQueue.current.splice(0, actionQueue.current.length - 8);
+    }
+    scheduleActionPump();
+  };
 
   useEffect(() => {
     initializePlatform().then(setPlatform).catch((error: unknown) => {
@@ -53,6 +95,7 @@ function App() {
       ws.onmessage = (event) => {
         const message = JSON.parse(String(event.data)) as ServerMessage;
         if (message.type === "snapshot") {
+          if (message.action) queueAction(message.action);
           setSnapshot(message);
           return;
         }
@@ -84,14 +127,6 @@ function App() {
   useEffect(() => {
     setSwapSelection([]);
   }, [snapshot?.phase]);
-
-  useEffect(() => {
-    const action = snapshot?.action;
-    if (!action || action.id === lastActionID.current) return;
-    lastActionID.current = action.id;
-    const frame = window.requestAnimationFrame(() => animateAction(action));
-    return () => window.cancelAnimationFrame(frame);
-  }, [snapshot?.action?.id]);
 
   const send = useCallback((message: ClientMessage) => {
     if (socket.current?.readyState !== WebSocket.OPEN) {
@@ -544,13 +579,25 @@ function uSeatStyle(index: number, total: number): CSSProperties {
   return { "--u-x": `${x}%`, "--u-y": `${y}%`, "--u-scale": scale } as CSSProperties;
 }
 
-function animateAction(action: ActionView) {
-  if (action.kind === "wrong_slap") animateWrongSlap(action);
-  if (action.kind === "swap" && action.first && action.second) animateSwap(action.first, action.second);
-  if (action.kind === "replace" && action.target) animateReplace(action.target);
-  if (action.kind === "discard") animateDiscard();
-  if (action.kind === "slap" && action.target) animateSlap(action.target);
-  if (action.kind === "gift" && action.first && action.second) animateGift(action.first, action.second);
+async function animateAction(action: ActionView): Promise<void> {
+  switch (action.kind) {
+    case "wrong_slap":
+      return animateWrongSlap(action);
+    case "swap":
+      if (action.first && action.second) return animateSwap(action.first, action.second);
+      return;
+    case "replace":
+      if (action.target) return animateReplace(action.target);
+      return;
+    case "discard":
+      return animateDiscard();
+    case "slap":
+      if (action.target) return animateSlap(action.target);
+      return;
+    case "gift":
+      if (action.first && action.second) return animateGift(action.first, action.second);
+      return;
+  }
 }
 
 function slotFor(target: CardRef): HTMLElement | undefined {
@@ -561,58 +608,56 @@ function cardFor(target: CardRef): HTMLElement | undefined {
   return slotFor(target)?.querySelector<HTMLElement>(".playing-card, .card-back") ?? undefined;
 }
 
-function animateSwap(first: CardRef, second: CardRef) {
+function animateSwap(first: CardRef, second: CardRef): Promise<void> {
   const a = cardFor(first);
   const b = cardFor(second);
-  if (!a || !b) return;
+  if (!a || !b) return Promise.resolve();
   const aRect = a.getBoundingClientRect();
   const bRect = b.getBoundingClientRect();
-  const landA = concealUntilLanding(a);
-  const landB = concealUntilLanding(b);
-  flyCard(a, bRect, aRect, -28, 0, 820, landA);
-  flyCard(b, aRect, bRect, 28, 0, 820, landB);
+  return Promise.all([
+    flyCard(a, bRect, aRect, -28, 0, 820),
+    flyCard(b, aRect, bRect, 28, 0, 820),
+  ]).then(() => undefined);
 }
 
-function animateReplace(target: CardRef) {
+function animateReplace(target: CardRef): Promise<void> {
   const targetCard = cardFor(target);
   const discardCard = document.querySelector<HTMLElement>(".discard-wrap .playing-card");
   const drawnPosition = document.querySelector<HTMLElement>(".drawn-card-position");
-  if (!targetCard || !discardCard || !drawnPosition) return;
+  if (!targetCard || !discardCard || !drawnPosition) return Promise.resolve();
   const targetRect = targetCard.getBoundingClientRect();
   const discardRect = discardCard.getBoundingClientRect();
   const drawnRect = drawnPosition.getBoundingClientRect();
-  const landDiscard = concealUntilLanding(discardCard);
-  const landTarget = concealUntilLanding(targetCard);
-  flyCard(discardCard, targetRect, discardRect, -30, 0, 680, landDiscard);
-  flyCard(targetCard, drawnRect, targetRect, 34, 95, 760, landTarget);
+  return Promise.all([
+    flyCard(discardCard, targetRect, discardRect, -30, 0, 680),
+    flyCard(targetCard, drawnRect, targetRect, 34, 95, 760),
+  ]).then(() => undefined);
 }
 
-function animateDiscard() {
+function animateDiscard(): Promise<void> {
   const drawnPosition = document.querySelector<HTMLElement>(".drawn-card-position");
   const discardCard = document.querySelector<HTMLElement>(".discard-wrap .playing-card");
-  if (!drawnPosition || !discardCard) return;
-  const land = concealUntilLanding(discardCard);
-  flyCard(discardCard, drawnPosition.getBoundingClientRect(), discardCard.getBoundingClientRect(), -22, 0, 620, land);
+  if (!drawnPosition || !discardCard) return Promise.resolve();
+  return flyCard(discardCard, drawnPosition.getBoundingClientRect(), discardCard.getBoundingClientRect(), -22, 0, 620);
 }
 
-function animateSlap(target: CardRef) {
+function animateSlap(target: CardRef): Promise<void> {
   const source = slotFor(target);
   const discardCard = document.querySelector<HTMLElement>(".discard-wrap .playing-card");
-  if (!source || !discardCard) return;
-  const land = concealUntilLanding(discardCard);
-  flyCard(discardCard, source.getBoundingClientRect(), discardCard.getBoundingClientRect(), -38, 0, 680, land);
+  if (!source || !discardCard) return Promise.resolve();
+  return flyCard(discardCard, source.getBoundingClientRect(), discardCard.getBoundingClientRect(), -38, 0, 680);
 }
 
-function animateWrongSlap(action: ActionView) {
+function animateWrongSlap(action: ActionView): Promise<void> {
   if (!action.target || !action.card) {
     animateWrongSlapShake(action.actorId);
-    return;
+    return Promise.resolve();
   }
   const source = slotFor(action.target);
   const discard = document.querySelector<HTMLElement>(".discard-wrap");
   if (!source || !discard) {
     animateWrongSlapShake(action.actorId);
-    return;
+    return Promise.resolve();
   }
 
   const sourceCard = source.querySelector<HTMLElement>(".playing-card, .card-back, .empty-slot");
@@ -648,13 +693,24 @@ function animateWrongSlap(action: ActionView) {
     { transform: `translate3d(${dx * .45}px, ${dy * .45 - 28}px, 0) rotate(-7deg) scale(1.04)`, opacity: 1, offset: .46 },
     { transform: `translate3d(${dx}px, ${dy}px, 0) rotate(-9deg) scale(.9)`, opacity: .92 },
   ], { duration: 720, easing: "cubic-bezier(.2,.78,.2,1)", fill: "both" });
-  const finish = (shake: boolean) => {
-    root.unmount();
-    ghost.remove();
-    if (shake) animateWrongSlapShake(action.actorId);
-  };
-  animation.addEventListener("finish", () => finish(true), { once: true });
-  animation.addEventListener("cancel", () => finish(false), { once: true });
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    let fallback: number | undefined;
+    const finish = (shake: boolean) => {
+      if (settled) return;
+      settled = true;
+      if (fallback !== undefined) window.clearTimeout(fallback);
+      root.unmount();
+      ghost.remove();
+      if (shake) animateWrongSlapShake(action.actorId);
+      resolve();
+    };
+    const finishWithShake = () => finish(true);
+    const cancel = () => finish(false);
+    animation.addEventListener("finish", finishWithShake, { once: true });
+    animation.addEventListener("cancel", cancel, { once: true });
+    fallback = window.setTimeout(finishWithShake, 980);
+  });
 }
 
 function animateWrongSlapShake(playerID: string) {
@@ -670,23 +726,14 @@ function animateWrongSlapShake(playerID: string) {
   ], { duration: 620, easing: "ease-out" });
 }
 
-function animateGift(source: CardRef, target: CardRef) {
+function animateGift(source: CardRef, target: CardRef): Promise<void> {
   const sourceSlot = slotFor(source);
   const targetCard = cardFor(target);
-  if (!sourceSlot || !targetCard) return;
-  const land = concealUntilLanding(targetCard);
-  flyCard(targetCard, sourceSlot.getBoundingClientRect(), targetCard.getBoundingClientRect(), 28, 0, 720, land);
+  if (!sourceSlot || !targetCard) return Promise.resolve();
+  return flyCard(targetCard, sourceSlot.getBoundingClientRect(), targetCard.getBoundingClientRect(), 28, 0, 720);
 }
 
-function concealUntilLanding(element: HTMLElement) {
-  const opacity = element.style.opacity;
-  element.style.opacity = "0";
-  return () => {
-    element.style.opacity = opacity;
-  };
-}
-
-function flyCard(card: HTMLElement, from: DOMRect, to: DOMRect, arc: number, delay: number, duration: number, land?: () => void) {
+function flyCard(card: HTMLElement, from: DOMRect, to: DOMRect, arc: number, delay: number, duration: number): Promise<void> {
   const ghost = card.cloneNode(true) as HTMLElement;
   ghost.classList.add("action-card-ghost");
   Object.assign(ghost.style, {
@@ -707,10 +754,20 @@ function flyCard(card: HTMLElement, from: DOMRect, to: DOMRect, arc: number, del
     { transform: `translate3d(${dx * .5}px, ${dy * .5 + arc}px, 0) rotate(${arc > 0 ? 7 : -7}deg) scale(1.1)`, opacity: 1, offset: .52 },
     { transform: `translate3d(${dx}px, ${dy}px, 0) rotate(0deg) scale(1)`, opacity: 1 },
   ], { duration, delay, easing: "cubic-bezier(.2,.78,.2,1)", fill: "both" });
-  animation.addEventListener("finish", () => {
-    land?.();
-    ghost.remove();
-  }, { once: true });
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    let fallback: number | undefined;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (fallback !== undefined) window.clearTimeout(fallback);
+      ghost.remove();
+      resolve();
+    };
+    animation.addEventListener("finish", finish, { once: true });
+    animation.addEventListener("cancel", finish, { once: true });
+    fallback = window.setTimeout(finish, duration + delay + 180);
+  });
 }
 
 function hash(value: string) {

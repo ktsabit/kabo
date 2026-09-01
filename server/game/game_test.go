@@ -285,6 +285,21 @@ func TestEndedRoundCanStartAgain(t *testing.T) {
 	}
 }
 
+func TestEventCursorsRemainMonotonicAcrossRounds(t *testing.T) {
+	g := startedGame(t)
+	g.DiscardEventID = 17
+	g.ActionEventID = 23
+	g.end("called_end")
+	readyPlayers(t, g, "a", "b")
+
+	if err := g.Apply("a", ClientMessage{Type: "start_game"}); err != nil {
+		t.Fatal(err)
+	}
+	if g.DiscardEventID != 17 || g.ActionEventID != 23 {
+		t.Fatalf("round reset reused event cursors: discard=%d action=%d", g.DiscardEventID, g.ActionEventID)
+	}
+}
+
 func TestEndedRoundRevealsEveryRemainingCard(t *testing.T) {
 	g := startedGame(t)
 	g.end("called_end")
