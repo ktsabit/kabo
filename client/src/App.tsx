@@ -292,13 +292,17 @@ function App() {
   const chooseSwap = (target: CardRef) => {
     if (!snapshot || snapshot.phase !== "await_swap" || snapshot.currentPlayerId !== snapshot.you.id) return;
     const exists = swapSelection.some((item) => sameRef(item, target));
-    const next = exists ? swapSelection.filter((item) => !sameRef(item, target)) : [...swapSelection, target].slice(-2);
-    setSwapSelection(next);
-  };
-
-  const confirmSwap = () => {
-    if (!snapshot || snapshot.phase !== "await_swap" || snapshot.currentPlayerId !== snapshot.you.id || swapSelection.length !== 2) return;
-    send({ type: "swap", first: swapSelection[0], second: swapSelection[1] });
+    if (exists) {
+      setSwapSelection(swapSelection.filter((item) => !sameRef(item, target)));
+      return;
+    }
+    if (swapSelection.length === 0) {
+      setSwapSelection([target]);
+      return;
+    }
+    const first = swapSelection[0];
+    setSwapSelection([first, target]);
+    send({ type: "swap", first, second: target });
   };
 
   const cardAction = (target: CardRef) => {
@@ -465,20 +469,13 @@ function App() {
                     </div>
                   </div>
                   <TurnPrompt snapshot={snapshot} isMyTurn={isMyTurn} />
-                  {isMyTurn && snapshot.phase === "await_swap" && swapSelection.length > 0 && (
-                    <div className="swap-controls" aria-label="Swap selection controls">
-                      <span>{swapSelection.length}/2</span>
-                      <button className="swap-clear" onClick={() => setSwapSelection([])}>Clear</button>
-                      <button className="primary-button swap-confirm" disabled={swapSelection.length !== 2} onClick={confirmSwap}>Confirm swap</button>
-                    </div>
-                  )}
                 </>
               )}
             </div>
 
             {me && !showingAftermath && (
               <div className="my-area">
-                <PlayerArea player={me} handLayout={handLayout} snapshot={snapshot} selected={swapSelection} onCard={cardAction} onSlap={slap} onGift={(slot) => send({ type: "gift", sourceSlot: slot })} mine canInteract={!tableLocked && snapshot.phase !== "ended"} revealEnded={showingAftermath} />
+                <PlayerArea player={me} handLayout={handLayout} snapshot={snapshot} selected={swapSelection} onCard={cardAction} onSlap={slap} onGift={(slot) => send({ type: "gift", sourceSlot: slot })} onInitialDone={() => send({ type: "acknowledge_initial" })} mine canInteract={!tableLocked && snapshot.phase !== "ended"} revealEnded={showingAftermath} />
                 {isMyTurn && snapshot.phase === "await_draw" && (
                   <button className="kabo-button" disabled={tableLocked} onClick={() => send({ type: "call_end" })}>KABO!</button>
                 )}
@@ -487,10 +484,6 @@ function App() {
           </>
         )}
       </section>
-
-      {snapshot.phase === "initial_peek" && snapshot.reveal?.kind === "initial" && (
-        <InitialPeekModal cards={snapshot.reveal.cards.map((item) => item.card)} deadlineAt={snapshot.deadlineAt} onDone={() => send({ type: "acknowledge_initial" })} />
-      )}
 
       {connection !== "open" && (
         <div className="reconnect-banner" role="status" aria-live="polite">
@@ -604,6 +597,19 @@ function RoundSummary({ snapshot, winners, losers, send, canStart }: { snapshot:
       {losers.length > 0 && <small className="loser-note">Loser · {losers.join(" & ")}</small>}
       <small>{endReason(snapshot.endReason)}</small>
       {starter && <small className="starter-note">{starter} starts</small>}
+      <div className="final-hands" aria-label="Everyone's final cards">
+        {snapshot.players.map((player) => (
+          <section className={snapshot.winnerIds?.includes(player.id) ? "winner" : ""} key={player.id}>
+            <div className="final-hand-heading">
+              <b>{player.id === snapshot.you.id ? "You" : player.name}</b>
+              <span>{player.score} pts</span>
+            </div>
+            <div className="final-hand-cards">
+              {player.cards.filter((slot) => slot.card).map((slot) => <PlayingCard key={slot.slot} card={slot.card!} compact />)}
+            </div>
+          </section>
+        ))}
+      </div>
       {canJoin && <button className="join-next-round summary-join" onClick={() => send({ type: "set_next_round", joinNextRound: true })}>Join</button>}
       {players.length > 0 && (
         <>
@@ -616,24 +622,7 @@ function RoundSummary({ snapshot, winners, losers, send, canStart }: { snapshot:
   );
 }
 
-function InitialPeekModal({ cards, deadlineAt, onDone }: { cards: Card[]; deadlineAt?: number; onDone: () => void }) {
-  return (
-    <div className="modal-backdrop initial-peek-backdrop">
-      <section className="reveal-modal initial-peek-modal" role="dialog" aria-modal="true" aria-labelledby="initial-peek-title">
-        <span className="eyebrow">PRIVATE PEEK</span>
-        <h2 id="initial-peek-title">Remember these cards</h2>
-        <div className="revealed-cards">
-          {cards.map((card) => <PlayingCard key={card.id} card={card} compact />)}
-        </div>
-        <p>Only you can see these two cards. They will close when you continue.</p>
-        <div className="initial-peek-countdown"><span>Closes in</span><TurnCountdown deadlineAt={deadlineAt} /></div>
-        <button className="primary-button initial-peek-done" onClick={onDone}>Ready to play</button>
-      </section>
-    </div>
-  );
-}
-
-function PlayerArea({ player, handLayout, snapshot, selected, onCard, onSlap, onGift, style, mine = false, canInteract = true, revealEnded = true }: {
+function PlayerArea({ player, handLayout, snapshot, selected, onCard, onSlap, onGift, onInitialDone, style, mine = false, canInteract = true, revealEnded = true }: {
   player: PlayerView;
   handLayout: HandLayout;
   snapshot: SnapshotMessage;
@@ -641,12 +630,14 @@ function PlayerArea({ player, handLayout, snapshot, selected, onCard, onSlap, on
   onCard: (target: CardRef) => void;
   onSlap: (target: CardRef) => void;
   onGift: (slot: number) => void;
+  onInitialDone?: () => void;
   style?: CSSProperties;
   mine?: boolean;
   canInteract?: boolean;
   revealEnded?: boolean;
 }) {
   const active = snapshot.currentPlayerId === player.id && snapshot.phase !== "initial_peek" && snapshot.phase !== "ended";
+  const initialRevealHere = mine && snapshot.reveal?.kind === "initial";
   const stillLooking = snapshot.phase === "initial_peek" && player.initialReady === false;
   const drawing = active && snapshot.phase === "await_choice";
   const giftMode = canInteract && snapshot.phase === "await_gift" && snapshot.pendingGift?.slapperId === snapshot.you.id && player.id === snapshot.you.id;
@@ -666,20 +657,9 @@ function PlayerArea({ player, handLayout, snapshot, selected, onCard, onSlap, on
   const handleTap = (target: CardRef) => {
     if (dragging.current || !canInteract) return;
     if (snapshot.phase === "await_swap" && snapshot.currentPlayerId === snapshot.you.id) {
-      const key = refKey(target);
-      const now = Date.now();
-      if (tap.current?.key === key && now - tap.current.at < DOUBLE_TAP_WINDOW) {
-        if (tap.current.timer) window.clearTimeout(tap.current.timer);
-        tap.current = undefined;
-        onSlap(target);
-        return;
-      }
       if (tap.current?.timer) window.clearTimeout(tap.current.timer);
+      tap.current = undefined;
       onCard(target);
-      const timer = window.setTimeout(() => {
-        if (tap.current?.key === key) tap.current = undefined;
-      }, DOUBLE_TAP_WINDOW);
-      tap.current = { key, at: now, timer };
       return;
     }
     const key = refKey(target);
@@ -735,7 +715,7 @@ function PlayerArea({ player, handLayout, snapshot, selected, onCard, onSlap, on
               const target = { playerId: player.id, slot: slot.slot };
               const selectionOrder = selected.findIndex((item) => sameRef(item, target)) + 1;
               const isSelected = selectionOrder > 0;
-              const revealed = snapshot.reveal?.kind === "initial" ? undefined : revealAt(snapshot, target);
+              const revealed = revealAt(snapshot, target);
               const peekReveal = Boolean(revealed && snapshot.reveal?.kind !== "initial");
               const power = canInteract ? powerHint(snapshot, target, slot.occupied) : undefined;
               const peekedByOther = snapshot.publicPeek?.viewerId !== snapshot.you.id && snapshot.publicPeek && sameRef(snapshot.publicPeek.target, target);
@@ -767,6 +747,7 @@ function PlayerArea({ player, handLayout, snapshot, selected, onCard, onSlap, on
                       : <div className="empty-slot" />}
                   </button>
                   {isSelected && <span className="selection-order" aria-hidden="true">{selectionOrder}</span>}
+                  {initialRevealHere && revealed && <span className="opening-card-marker">Card {slot.slot + 1}</span>}
                   {giftMode && slot.occupied && (
                     <button className="gift-button" onClick={() => onGift(slot.slot)}>GIVE</button>
                   )}
@@ -778,6 +759,13 @@ function PlayerArea({ player, handLayout, snapshot, selected, onCard, onSlap, on
           </div>
         ))}
       </div>
+      {initialRevealHere && onInitialDone && (
+        <div className="opening-guide" role="status">
+          <span><b>Remember cards 3 &amp; 4</b><small>These faces are shown in their real positions.</small></span>
+          <TurnCountdown deadlineAt={snapshot.deadlineAt} />
+          <button className="primary-button" onClick={onInitialDone}>Ready</button>
+        </div>
+      )}
     </section>
   );
 }
@@ -788,7 +776,7 @@ function TurnPrompt({ snapshot, isMyTurn }: { snapshot: SnapshotMessage; isMyTur
   if (snapshot.phase === "await_draw") action = "Draw";
   if (snapshot.phase === "await_choice") action = "Choose";
   if (snapshot.phase === "await_self_peek" || snapshot.phase === "await_opponent_peek" || snapshot.phase === "await_king_peek") action = "Peek";
-  if (snapshot.phase === "await_swap") action = "Swap";
+  if (snapshot.phase === "await_swap") action = isMyTurn ? "Select 2 cards — swap is automatic" : "Choosing 2 cards";
   if (snapshot.phase === "await_gift") action = "Give";
   if (!action) return null;
   const activeName = snapshot.players.find((player) => player.id === snapshot.currentPlayerId)?.name ?? "Player";

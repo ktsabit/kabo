@@ -71,6 +71,49 @@ async function startedRoom(room: string, playerCount = 8, acknowledgeInitial = t
   return clients;
 }
 
+function firstOccupied(snapshot: any, playerId: string) {
+  const slot = snapshot.players.find((player: any) => player.id === playerId)?.cards.find((card: any) => card.occupied);
+  if (!slot) throw new Error(`no occupied card for ${playerId}`);
+  return { playerId, slot: slot.slot };
+}
+
+async function advanceToSwap(clients: RoomSocket[]) {
+  for (let step = 0; step < 120; step += 1) {
+    const snapshot = clients[0].latest;
+    const actorId = snapshot.currentPlayerId;
+    const actor = clients[Number(actorId.slice(1))];
+    if (snapshot.phase === "await_swap") return snapshot;
+    if (snapshot.phase === "await_draw") {
+      actor.send({ type: "draw" });
+      await clients[0].waitFor((next) => next.phase !== "await_draw");
+      continue;
+    }
+    if (snapshot.phase === "await_choice") {
+      actor.send({ type: "discard_drawn" });
+      await clients[0].waitFor((next) => next.phase !== "await_choice");
+      continue;
+    }
+    if (snapshot.phase === "await_self_peek") {
+      actor.send({ type: "peek", target: firstOccupied(snapshot, actorId) });
+      await clients[0].waitFor((next) => next.phase === "reveal_self");
+      continue;
+    }
+    if (snapshot.phase === "await_opponent_peek" || snapshot.phase === "await_king_peek") {
+      const opponentId = snapshot.players.find((player: any) => player.id !== actorId).id;
+      actor.send({ type: "peek", target: firstOccupied(snapshot, opponentId) });
+      await clients[0].waitFor((next) => next.phase.startsWith("reveal_"));
+      continue;
+    }
+    if (snapshot.phase.startsWith("reveal_")) {
+      actor.send({ type: "acknowledge_reveal" });
+      await clients[0].waitFor((next) => !next.phase.startsWith("reveal_"));
+      continue;
+    }
+    throw new Error(`unexpected phase while seeking swap: ${snapshot.phase}`);
+  }
+  throw new Error("did not draw a swap power card");
+}
+
 async function expectReachable(page: Page, selector: string) {
   const element = page.locator(selector).first();
   await expect(element).toBeVisible();
@@ -175,6 +218,8 @@ test("round aftermath keeps ready and start controls reachable", async ({ page }
     await page.goto(`/?room=${room}&user=p0&name=Player%200`);
     await expect(page.locator(".round-summary.next-round-lobby")).toBeVisible();
     await expect(page.locator(".player-area")).toHaveCount(0);
+    await expect(page.locator(".final-hands > section")).toHaveCount(2);
+    await expect(page.locator(".final-hand-cards .playing-card")).toHaveCount(8);
     for (const viewport of matrix) {
       await test.step(viewport.name, async () => {
         await page.setViewportSize(viewport);
@@ -187,29 +232,52 @@ test("round aftermath keeps ready and start controls reachable", async ({ page }
     clients[1].send({ type: "set_ready", ready: true });
     await expect(page.getByRole("button", { name: "Play next round" })).toBeEnabled();
     await page.getByRole("button", { name: "Play next round" }).click();
-    await expect(page.getByRole("dialog", { name: "Remember these cards" })).toBeVisible();
+    await expect(page.locator(".my-area .opening-guide")).toBeVisible();
   } finally {
     clients.forEach((client) => client.close());
   }
 });
 
-test("each player receives an explicit private opening peek and countdown", async ({ page }) => {
+test("each player sees the private opening cards in their real hand positions", async ({ page }) => {
   const room = `initial-${Date.now()}`;
   const clients = await startedRoom(room, 2, false);
   try {
     await page.goto(`/?room=${room}&user=p0&name=Player%200`);
-    const modal = page.getByRole("dialog", { name: "Remember these cards" });
-    await expect(modal).toBeVisible();
-    await expect(modal.locator(".playing-card")).toHaveCount(2);
-    await expect(modal.locator(".card-back")).toHaveCount(0);
-    await expect(modal.locator(".playing-card").first()).not.toHaveAttribute("aria-label", "Face-down card");
-    await expect(modal.locator(".turn-countdown")).toContainText(/\d+s/);
-    await modal.getByRole("button", { name: "Ready to play" }).click();
-    await expect(modal).toBeHidden();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    const myHand = page.locator('.player-area[data-player-id="p0"]');
+    await expect(myHand.locator(".playing-card")).toHaveCount(2);
+    await expect(myHand.locator('[data-card-ref="p0:0"] .playing-card, [data-card-ref="p0:1"] .playing-card')).toHaveCount(0);
+    await expect(myHand.locator('[data-card-ref="p0:2"] .playing-card, [data-card-ref="p0:3"] .playing-card')).toHaveCount(2);
+    await expect(myHand.locator(".opening-card-marker")).toHaveText(["Card 3", "Card 4"]);
+    await expect(myHand.locator(".opening-guide .turn-countdown")).toContainText(/\d+s/);
+    await myHand.getByRole("button", { name: "Ready" }).click();
+    await expect(myHand.locator(".opening-guide")).toBeHidden();
     await clients[1].waitFor((snapshot) => snapshot.phase === "initial_peek" && snapshot.players?.find((player: any) => player.id === "p0")?.initialReady === true);
     clients[1].send({ type: "acknowledge_initial" });
     await clients[1].waitFor((snapshot) => snapshot.phase === "await_draw");
     await expect(page.locator(".turn-prompt .turn-countdown")).toContainText(/\d+s/);
+  } finally {
+    clients.forEach((client) => client.close());
+  }
+});
+
+test("a power-card swap completes as soon as the second card is selected", async ({ page }) => {
+  const room = `swap-${Date.now()}`;
+  const clients = await startedRoom(room, 2);
+  try {
+    const swap = await advanceToSwap(clients);
+    const actorId = swap.currentPlayerId;
+    const observer = clients[actorId === "p0" ? 1 : 0];
+    await page.goto(`/?room=${room}&user=${actorId}&name=${actorId === "p0" ? "Player%200" : "Player%201"}`);
+    await expect(page.getByText("Select 2 cards — swap is automatic")).toBeVisible();
+    await expect(page.getByRole("button", { name: /confirm swap/i })).toHaveCount(0);
+    const targets = page.locator(".power-target .card-button");
+    expect(await targets.count()).toBeGreaterThanOrEqual(2);
+    await targets.nth(0).click();
+    await expect(page.locator(".selection-order")).toHaveText("1");
+    await targets.nth(1).click();
+    await observer.waitFor((snapshot) => snapshot.phase !== "await_swap");
+    await expect(page.getByText("Select 2 cards — swap is automatic")).toBeHidden();
   } finally {
     clients.forEach((client) => client.close());
   }
