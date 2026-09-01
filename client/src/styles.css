@@ -72,7 +72,7 @@ button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 .ended-screen { grid-row: 1 / -1; min-height: 0; display: grid; place-items: center; overflow: auto; padding: 8px 0 max(8px, env(safe-area-inset-bottom)); }
 .opponents-u { position: absolute; z-index: 2; inset: 44px 0 168px; pointer-events: none; }
 .opponents-u .player-area { position: absolute; left: var(--u-x); top: var(--u-y); transform: translate(-50%, -50%) scale(var(--u-scale)); transform-origin: center; pointer-events: auto; }
-.table-layout .table-center { grid-row: 2; z-index: 1; }
+.table-layout .table-center { position: absolute; z-index: 1; left: 50%; top: 50%; transform: translate(-50%, -50%); }
 .table-layout .my-area { grid-row: 3; z-index: 2; }
 .table-layout .my-area { transform: translateY(-24px); }
 .my-area { display: flex; justify-content: center; align-items: center; gap: 20px; }
