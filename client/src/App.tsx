@@ -449,7 +449,6 @@ function App() {
         )}
       </section>
 
-      {actionAnimating && snapshot.action && <ActionFeedback snapshot={snapshot} />}
       {connection !== "open" && (
         <div className="reconnect-banner" role="status" aria-live="polite">
           <span className={`connection-dot ${connection}`} />
@@ -461,21 +460,6 @@ function App() {
       <span className={`connection-dot table-connection ${connection}`} aria-label={connection === "open" ? "Connected" : "Reconnecting"} />
     </main>
   );
-}
-
-function ActionFeedback({ snapshot }: { snapshot: SnapshotMessage }) {
-  const action = snapshot.action;
-  if (!action) return null;
-  const actor = snapshot.players.find((player) => player.id === action.actorId)?.name ?? "Player";
-  const text = {
-    swap: `${actor} swaps two cards`,
-    replace: `${actor} replaces a card`,
-    discard: `${actor} discards`,
-    slap: `${actor} lands the slap`,
-    wrong_slap: `${actor} missed · penalty`,
-    gift: `${actor} gives a card`,
-  }[action.kind];
-  return <div className={`action-feedback feedback-${action.kind}`} role="status" aria-live="polite">{text}</div>;
 }
 
 function NextRoundRoster({ snapshot, send }: { snapshot: SnapshotMessage; send: (message: ClientMessage) => void }) {
@@ -928,23 +912,13 @@ async function animateSwap(firstRef: CardRef, secondRef: CardRef, first: ActionA
   if (!firstDestination || !secondDestination) return;
   const distance = Math.hypot(secondDestination.left - first.rect.left, secondDestination.top - first.rect.top);
   const swapArc = Math.min(96, Math.max(48, distance * .16));
-  const restore = hideCardButtons([firstRef, secondRef]);
-  let arrived = 0;
-  let restored = false;
-  const revealDestinations = () => {
-    arrived += 1;
-    if (arrived < 2 || restored) return;
-    restored = true;
-    restore();
-  };
-  try {
-    await Promise.all([
-      flyCard(cardBackElement(), first.rect, secondDestination, -swapArc, 0, 760, undefined, false, 0, "swap-card-flight", { holdAtDestination: 80, beforeRemove: revealDestinations }),
-      flyCard(cardBackElement(), second.rect, firstDestination, swapArc, 0, 760, undefined, false, 0, "swap-card-flight", { holdAtDestination: 80, beforeRemove: revealDestinations }),
-    ]);
-  } finally {
-    if (!restored) restore();
-  }
+  // The real card backs stay visible throughout. The flying backs merge into
+  // identical destinations, avoiding a hidden -> visible landing frame that
+  // looked like a back-to-back flip to observers.
+  await Promise.all([
+    flyCard(cardBackElement(), first.rect, secondDestination, -swapArc, 0, 760, undefined, false, 0, "swap-card-flight"),
+    flyCard(cardBackElement(), second.rect, firstDestination, swapArc, 0, 760, undefined, false, 0, "swap-card-flight"),
+  ]);
 }
 
 function cardBackElement(): HTMLElement {
@@ -1277,8 +1251,8 @@ function holdActionVisuals(action: ActionView, activePlayerID?: string): () => v
       elements.push(liveDiscardElement());
       break;
     case "swap":
-      if (action.first) elements.push(liveCardElement(action.first));
-      if (action.second) elements.push(liveCardElement(action.second));
+      // Keep the destination backs rendered under the swap flights. Hiding
+      // them caused a one-frame reveal after the ghosts landed.
       break;
     case "gift":
       if (action.second) elements.push(liveCardElement(action.second));
@@ -1307,14 +1281,6 @@ function hideElements(elements: Array<HTMLElement | undefined>): () => void {
   const visible = [...new Set(elements.filter((element): element is HTMLElement => Boolean(element)))];
   visible.forEach((element) => element.classList.add("action-visual-hidden"));
   return () => visible.forEach((element) => element.classList.remove("action-visual-hidden"));
-}
-
-function hideCardButtons(targets: CardRef[]): () => void {
-  const buttons = targets
-    .map((target) => slotFor(target)?.querySelector<HTMLElement>(".card-button"))
-    .filter((button): button is HTMLElement => Boolean(button));
-  buttons.forEach((button) => button.classList.add("action-origin-hidden"));
-  return () => buttons.forEach((button) => button.classList.remove("action-origin-hidden"));
 }
 
 function hash(value: string) {

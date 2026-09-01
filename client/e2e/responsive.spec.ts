@@ -124,6 +124,27 @@ test("eight-player table keeps all critical controls reachable", async ({ page }
   }
 });
 
+test("round aftermath keeps ready and start controls reachable", async ({ page }) => {
+  const room = `aftermath-${Date.now()}`;
+  const clients = await startedRoom(room, 2);
+  try {
+    clients[0].send({ type: "call_end" });
+    await clients[0].waitFor((snapshot) => snapshot.phase === "ended");
+    await page.goto(`/?room=${room}&user=p0&name=Player%200`);
+    await expect(page.locator(".round-summary.next-round-lobby")).toBeVisible();
+    for (const viewport of matrix) {
+      await test.step(viewport.name, async () => {
+        await page.setViewportSize(viewport);
+        await expectReachable(page, ".round-summary .ready-toggle");
+        await expectReachable(page, ".round-summary .primary-button");
+        await expectNoViewportCropping(page);
+      });
+    }
+  } finally {
+    clients.forEach((client) => client.close());
+  }
+});
+
 test("resize interruption and reconnect recover to an authoritative table", async ({ page, context }) => {
   const room = `recovery-${Date.now()}`;
   const clients = await startedRoom(room, 2);
@@ -133,10 +154,9 @@ test("resize interruption and reconnect recover to an authoritative table", asyn
     await page.locator(".deck").click();
     await expect(page.locator(".drawn-card-zone")).toBeVisible();
     await page.locator(".discard-wrap.can-discard").click();
-    await expect(page.locator(".action-feedback")).toBeVisible();
+    await expect(page.locator(".action-card-ghost")).toBeVisible();
 
     await page.setViewportSize({ width: 768, height: 500 });
-    await expect(page.locator(".action-feedback")).toBeHidden();
     await expect(page.locator(".action-card-ghost, .action-card-static")).toHaveCount(0);
 
     await context.setOffline(true);
