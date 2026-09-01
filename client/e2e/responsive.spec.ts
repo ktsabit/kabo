@@ -106,6 +106,20 @@ async function expectPileClearOfHands(page: Page) {
   expect(overlaps, "draw and discard piles overlap a player's hand").toEqual([]);
 }
 
+async function elementRect(page: Page, selector: string) {
+  return page.locator(selector).evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+  });
+}
+
+function expectStableRect(before: Awaited<ReturnType<typeof elementRect>>, after: Awaited<ReturnType<typeof elementRect>>) {
+  expect(Math.abs(after.x - before.x), "element moved horizontally").toBeLessThanOrEqual(1);
+  expect(Math.abs(after.y - before.y), "element moved vertically").toBeLessThanOrEqual(1);
+  expect(Math.abs(after.width - before.width), "element width changed").toBeLessThanOrEqual(1);
+  expect(Math.abs(after.height - before.height), "element height changed").toBeLessThanOrEqual(1);
+}
+
 test("lobby ready control remains reachable across the viewport matrix", async ({ page }) => {
   await page.goto(`/?room=lobby-${Date.now()}&user=matrix-lobby&name=Matrix`);
   await expect(page.locator(".lobby-card")).toBeVisible();
@@ -126,6 +140,7 @@ test("eight-player table keeps all critical controls reachable", async ({ page }
     await page.goto(`/?room=${room}&user=p0&name=Player%200`);
     await expect(page.locator(".game-surface.table-layout")).toBeVisible();
     await expect(page.locator(".reconnect-banner")).toBeHidden();
+    await expect(page.locator(".slap-button")).toHaveCount(0);
     const firstHand = page.locator(".player-area").first().locator(".card-row");
     await expect(firstHand).toHaveCount(1);
     await page.getByRole("button", { name: "Switch to grid hand layout" }).click();
@@ -177,10 +192,13 @@ test("resize interruption and reconnect recover to an authoritative table", asyn
   try {
     await page.goto(`/?room=${room}&user=p0&name=Player%200`);
     await expect(page.locator(".game-surface.table-layout")).toBeVisible();
+    const pileBeforeDraw = await elementRect(page, ".pile-zone");
     await page.locator(".deck").click();
     await expect(page.locator(".drawn-card-zone")).toBeVisible();
+    expectStableRect(pileBeforeDraw, await elementRect(page, ".pile-zone"));
     await page.locator(".discard-wrap.can-discard").click();
     await expect(page.locator(".action-card-ghost")).toBeVisible();
+    expectStableRect(pileBeforeDraw, await elementRect(page, ".pile-zone"));
 
     await page.setViewportSize({ width: 768, height: 500 });
     await expect(page.locator(".action-card-ghost, .action-card-static")).toHaveCount(0);

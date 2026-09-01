@@ -37,6 +37,12 @@ type ActionVisualHold = {
   release: () => void;
 };
 
+type FlightSettle = {
+  holdAtDestination?: number;
+  beforeRemove?: () => void;
+  destination?: () => DOMRect | undefined;
+};
+
 const DOUBLE_TAP_WINDOW = 360;
 const HAND_LAYOUT_STORAGE_KEY = "kabo-hand-layout";
 const activeActionAnimations = new Set<Animation>();
@@ -385,6 +391,7 @@ function App() {
             <button
               className="ghost-button hand-layout-toggle"
               onClick={toggleHandLayout}
+              disabled={actionAnimating}
               aria-label={`Switch to ${handLayout === "strip" ? "grid" : "strip"} hand layout`}
               title={`Hand layout: ${handLayout === "strip" ? "single-row strip" : "two-row grid"}`}
             >
@@ -739,9 +746,6 @@ function PlayerArea({ player, handLayout, snapshot, selected, onCard, onSlap, on
                       : <div className="empty-slot" />}
                   </button>
                   {isSelected && <span className="selection-order" aria-hidden="true">{selectionOrder}</span>}
-                  {canInteract && slot.occupied && snapshot.discardTop && snapshot.phase !== "initial_peek" && snapshot.phase !== "ended" && (
-                    <button className="slap-button" onClick={() => onSlap(target)} aria-label={`Slap ${player.name}'s card ${slot.slot + 1}`}>↯</button>
-                  )}
                   {giftMode && slot.occupied && (
                     <button className="gift-button" onClick={() => onGift(slot.slot)}>GIVE</button>
                   )}
@@ -955,8 +959,8 @@ async function animateSwap(firstRef: CardRef, secondRef: CardRef, first: ActionA
   };
   try {
     await Promise.all([
-      flyCard(cardBackElement(), first.rect, secondDestination, -swapArc, 0, 760, undefined, false, 0, "swap-card-flight", { holdAtDestination: 90, beforeRemove: revealUnderFlights }),
-      flyCard(cardBackElement(), second.rect, firstDestination, swapArc, 0, 760, undefined, false, 0, "swap-card-flight", { holdAtDestination: 90, beforeRemove: revealUnderFlights }),
+      flyCard(cardBackElement(), first.rect, secondDestination, -swapArc, 0, 760, undefined, false, 0, "swap-card-flight", { holdAtDestination: 90, beforeRemove: revealUnderFlights, destination: () => liveCardRect(secondRef) }),
+      flyCard(cardBackElement(), second.rect, firstDestination, swapArc, 0, 760, undefined, false, 0, "swap-card-flight", { holdAtDestination: 90, beforeRemove: revealUnderFlights, destination: () => liveCardRect(firstRef) }),
     ]);
   } finally {
     if (!restored) restoreCards();
@@ -971,7 +975,7 @@ async function animateReplace(action: ActionView, targetRef: CardRef, target: Ac
   const targetDestination = liveCardRect(targetRef);
   const discardDestination = liveDiscardRect();
   if (!targetDestination || !discardDestination) return;
-  const releaseDiscard = pinActionCard(discard);
+  const releaseDiscard = pinActionCard(discard, liveDiscardRect);
   const observerAlreadySeesBack = drawn.element.matches(".card-back")
     || (Boolean(drawn.element.querySelector(".card-back")) && !drawn.element.querySelector(".playing-card"));
   try {
@@ -979,8 +983,8 @@ async function animateReplace(action: ActionView, targetRef: CardRef, target: Ac
       // Keep the outgoing card covering the old discard until the incoming
       // card has also finished. Otherwise the old discard flashes back for a
       // few frames between the two independent animations.
-      flyCard(target.element, target.rect, discardDestination, -30, 0, 855, action.card),
-      flyCard(drawn.element, drawn.rect, targetDestination, 34, 95, 760, undefined, !observerAlreadySeesBack),
+      flyCard(target.element, target.rect, discardDestination, -30, 0, 855, action.card, false, 7, "", { destination: liveDiscardRect }),
+      flyCard(drawn.element, drawn.rect, targetDestination, 34, 95, 760, undefined, !observerAlreadySeesBack, 7, "", { destination: () => liveCardRect(targetRef) }),
     ]);
   } finally {
     releaseDiscard();
@@ -990,9 +994,9 @@ async function animateReplace(action: ActionView, targetRef: CardRef, target: Ac
 async function animateDiscard(action: ActionView, discard: ActionAnchor, drawn: ActionAnchor): Promise<void> {
   const discardDestination = liveDiscardRect();
   if (!discardDestination) return;
-  const releaseDiscard = pinActionCard(discard);
+  const releaseDiscard = pinActionCard(discard, liveDiscardRect);
   try {
-    await flyCard(drawn.element, drawn.rect, discardDestination, -22, 0, 620, action.card);
+    await flyCard(drawn.element, drawn.rect, discardDestination, -22, 0, 620, action.card, false, 7, "", { destination: liveDiscardRect });
   } finally {
     releaseDiscard();
   }
@@ -1001,9 +1005,9 @@ async function animateDiscard(action: ActionView, discard: ActionAnchor, drawn: 
 async function animateSlap(action: ActionView, target: ActionAnchor, discard: ActionAnchor): Promise<void> {
   const discardDestination = liveDiscardRect();
   if (!discardDestination) return;
-  const releaseDiscard = pinActionCard(discard);
+  const releaseDiscard = pinActionCard(discard, liveDiscardRect);
   try {
-    await flyCard(target.element, target.rect, discardDestination, -38, 0, 680, action.card);
+    await flyCard(target.element, target.rect, discardDestination, -38, 0, 680, action.card, false, 7, "", { destination: liveDiscardRect });
     if (action.target) await animateHandCompaction(action.target.playerId);
   } finally {
     releaseDiscard();
@@ -1147,7 +1151,7 @@ function animateWrongSlapShake(playerID: string): Promise<void> {
 async function animateGift(targetRef: CardRef, source: ActionAnchor): Promise<void> {
   const destination = liveCardRect(targetRef);
   if (!destination) return;
-  await flyCard(source.element, source.rect, destination, 28, 0, 720);
+  await flyCard(source.element, source.rect, destination, 28, 0, 720, undefined, false, 7, "", { destination: () => liveCardRect(targetRef) });
 }
 
 function flyCard(
@@ -1161,7 +1165,7 @@ function flyCard(
   flipToBack = false,
   tilt = 7,
   flightClass = "",
-  settle?: { holdAtDestination?: number; beforeRemove?: () => void },
+  settle?: FlightSettle,
 ): Promise<void> {
   const ghost = document.createElement("div");
   ghost.className = `action-card-ghost ${flightClass}`.trim();
@@ -1241,10 +1245,16 @@ function flyCard(
         cleanup();
         return;
       }
-      settle?.beforeRemove?.();
-      const hold = settle?.holdAtDestination ?? 0;
-      if (hold > 0) window.setTimeout(cleanup, hold);
-      else cleanup();
+      void settleFlightGhost(ghost, settle?.destination).then(() => {
+        if (!ghost.isConnected) {
+          cleanup();
+          return;
+        }
+        settle?.beforeRemove?.();
+        const hold = settle?.holdAtDestination ?? 0;
+        if (hold > 0) window.setTimeout(cleanup, hold);
+        else cleanup();
+      });
     };
     animation.addEventListener("finish", () => finish(true), { once: true });
     animation.addEventListener("cancel", () => finish(false), { once: true });
@@ -1252,18 +1262,49 @@ function flyCard(
   });
 }
 
-function pinActionCard(anchor: ActionAnchor): () => void {
+async function settleFlightGhost(ghost: HTMLElement, destination?: () => DOMRect | undefined): Promise<void> {
+  if (!destination || !ghost.isConnected) return;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const target = destination();
+    if (!target || !ghost.isConnected) return;
+    const current = ghost.getBoundingClientRect();
+    const dx = target.left - current.left;
+    const dy = target.top - current.top;
+    const dw = target.width - current.width;
+    const dh = target.height - current.height;
+    if (Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dw), Math.abs(dh)) < .75) return;
+    const computed = getComputedStyle(ghost);
+    const left = Number.parseFloat(computed.left) || 0;
+    const top = Number.parseFloat(computed.top) || 0;
+    const correction = actionAnimate(ghost, [
+      { left: `${left}px`, top: `${top}px`, width: `${current.width}px`, height: `${current.height}px` },
+      { left: `${left + dx}px`, top: `${top + dy}px`, width: `${target.width}px`, height: `${target.height}px` },
+    ], { duration: attempt === 0 ? 120 : 70, easing: "cubic-bezier(.2,.8,.2,1)", fill: "forwards" });
+    await correction.finished.catch(() => undefined);
+  }
+}
+
+function pinActionCard(anchor: ActionAnchor, destination?: () => DOMRect | undefined): () => void {
   const ghost = document.createElement("div");
   ghost.className = "action-card-static";
   ghost.appendChild(anchor.element.cloneNode(true));
-  Object.assign(ghost.style, {
-    left: `${anchor.rect.left}px`,
-    top: `${anchor.rect.top}px`,
-    width: `${anchor.rect.width}px`,
-    height: `${anchor.rect.height}px`,
-  });
   document.body.appendChild(ghost);
-  return () => ghost.remove();
+  let frame: number | undefined;
+  const track = () => {
+    const rect = destination?.() ?? anchor.rect;
+    Object.assign(ghost.style, {
+      left: `${rect.left}px`,
+      top: `${rect.top}px`,
+      width: `${rect.width}px`,
+      height: `${rect.height}px`,
+    });
+    frame = window.requestAnimationFrame(track);
+  };
+  track();
+  return () => {
+    if (frame !== undefined) window.cancelAnimationFrame(frame);
+    ghost.remove();
+  };
 }
 
 function liveCardRect(target: CardRef): DOMRect | undefined {
