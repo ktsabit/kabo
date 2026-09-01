@@ -101,6 +101,110 @@ func TestRoundCannotStartUntilEveryoneIsReady(t *testing.T) {
 	}
 }
 
+func TestInitialPeekTimeoutMakesTheRoundPlayable(t *testing.T) {
+	g := New("room", rand.New(rand.NewSource(10)))
+	_, _ = g.AddOrReconnect("a", "Ada")
+	_, _ = g.AddOrReconnect("b", "Ben")
+	readyPlayers(t, g, "a", "b")
+	if err := g.Apply("a", ClientMessage{Type: "start_game"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Timeout(); err != nil {
+		t.Fatal(err)
+	}
+	if g.Phase != PhaseAwaitDraw || g.InitialPending["a"] || g.InitialPending["b"] {
+		t.Fatalf("initial timeout did not release the round: phase=%s pending=%v", g.Phase, g.InitialPending)
+	}
+}
+
+func TestTurnTimeoutAutoDiscardsDrawnCard(t *testing.T) {
+	g := startedGame(t)
+	g.Deck = []Card{
+		{ID: "keep-card", Rank: 3, Suit: Clubs},
+		{ID: "timeout-card", Rank: 4, Suit: Clubs},
+	}
+	if err := g.Apply("a", ClientMessage{Type: "draw"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Timeout(); err != nil {
+		t.Fatal(err)
+	}
+	if g.Drawn != nil || g.Phase != PhaseAwaitDraw || g.currentPlayerID() != "b" {
+		t.Fatalf("draw timeout did not advance cleanly: drawn=%+v phase=%s current=%s", g.Drawn, g.Phase, g.currentPlayerID())
+	}
+	if len(g.Discard) == 0 || g.Discard[len(g.Discard)-1].ID != "timeout-card" {
+		t.Fatalf("timed-out drawn card was not discarded: %+v", g.Discard)
+	}
+	if g.Action == nil || g.Action.Kind != "discard" {
+		t.Fatalf("timeout discard should be visible as an action: %+v", g.Action)
+	}
+}
+
+func TestPowerAndRevealTimeoutsAdvanceTheTurn(t *testing.T) {
+	g := startedGame(t)
+	g.Phase = PhaseAwaitSelfPeek
+	g.ActorID = "a"
+	if err := g.Timeout(); err != nil {
+		t.Fatal(err)
+	}
+	if g.Phase != PhaseAwaitDraw || g.currentPlayerID() != "b" {
+		t.Fatalf("power timeout did not advance: phase=%s current=%s", g.Phase, g.currentPlayerID())
+	}
+
+	g.Current = 0
+	g.Phase = PhaseRevealSelf
+	g.ActorID = "a"
+	g.Reveal = &privateReveal{
+		Kind:   "self",
+		Viewer: "a",
+		Cards:  []RevealCard{{Target: CardRef{PlayerID: "a", Slot: 0}, Card: *g.player("a").Cards[0]}},
+	}
+	if err := g.Timeout(); err != nil {
+		t.Fatal(err)
+	}
+	if g.Reveal != nil || g.Phase != PhaseAwaitDraw || g.currentPlayerID() != "b" {
+		t.Fatalf("reveal timeout did not advance: reveal=%+v phase=%s current=%s", g.Reveal, g.Phase, g.currentPlayerID())
+	}
+}
+
+func TestRoundResultMarksFailedKaboCaller(t *testing.T) {
+	g := startedGame(t)
+	g.player("a").Cards = []*Card{{ID: "a1", Rank: 1, Suit: Clubs}}
+	g.player("b").Cards = []*Card{{ID: "b9", Rank: 9, Suit: Clubs}}
+	g.Players = append(g.Players, &Player{
+		ID:               "c",
+		Name:             "Cleo",
+		Connected:        true,
+		JoiningNextRound: true,
+		Cards:            []*Card{{ID: "c13", Rank: 13, Suit: Spades}},
+	})
+	g.Current = 1
+	g.Phase = PhaseAwaitDraw
+	if err := g.Apply("b", ClientMessage{Type: "call_end"}); err != nil {
+		t.Fatal(err)
+	}
+	result := g.Result()
+	if result == nil || result.CalledBy != "b" || len(result.Players) != 3 {
+		t.Fatalf("unexpected round result: %+v", result)
+	}
+	for _, player := range result.Players {
+		switch player.ID {
+		case "a":
+			if !player.Winner || player.Score != 1 || player.CalledKabo || player.KaboFailed {
+				t.Fatalf("Ada result = %+v", player)
+			}
+		case "b":
+			if player.Winner || player.Score != 9 || !player.CalledKabo || !player.KaboFailed {
+				t.Fatalf("Ben result = %+v", player)
+			}
+		case "c":
+			if player.Winner || player.Loser || player.Score != 13 || player.CalledKabo || player.KaboFailed {
+				t.Fatalf("Cleo result = %+v", player)
+			}
+		}
+	}
+}
+
 func TestNextRoundStartsWithPreviousWinner(t *testing.T) {
 	g := startedGame(t)
 	g.player("a").Cards = []*Card{

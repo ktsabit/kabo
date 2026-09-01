@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"sort"
 	"sync"
+	"time"
 )
 
 type Phase string
@@ -82,7 +83,13 @@ type Game struct {
 	ActorID        string
 	EndReason      string
 	WinnerIDs      []string
+	LoserIDs       []string
 	NextStarterID  string
+	RoundNumber    int
+	RoundStartedAt time.Time
+	RoundEndedAt   time.Time
+	CalledBy       string
+	DeadlineAt     time.Time
 	rng            *rand.Rand
 }
 
@@ -221,6 +228,8 @@ func (g *Game) start() error {
 	if len(g.Players) < 2 {
 		return errors.New("at least two players are required")
 	}
+	g.RoundNumber++
+	g.RoundStartedAt = time.Now()
 	g.Deck = newDeck()
 	g.rng.Shuffle(len(g.Deck), func(i, j int) { g.Deck[i], g.Deck[j] = g.Deck[j], g.Deck[i] })
 	for round := 0; round < 4; round++ {
@@ -264,6 +273,10 @@ func (g *Game) resetRoundState() {
 	g.ActorID = ""
 	g.EndReason = ""
 	g.WinnerIDs = nil
+	g.LoserIDs = nil
+	g.CalledBy = ""
+	g.RoundEndedAt = time.Time{}
+	g.DeadlineAt = time.Time{}
 }
 
 func (g *Game) prepareNextRound() {
@@ -413,7 +426,10 @@ func (g *Game) allNextRoundReady() bool {
 }
 
 func (g *Game) acknowledgeInitial(playerID string) error {
-	if g.Phase != PhaseInitialPeek || !g.InitialPending[playerID] {
+	if g.Phase != PhaseInitialPeek {
+		return nil
+	}
+	if !g.InitialPending[playerID] {
 		return errors.New("there is no initial reveal to hide")
 	}
 	g.InitialPending[playerID] = false
@@ -521,7 +537,10 @@ func (g *Game) peek(playerID string, target CardRef) error {
 }
 
 func (g *Game) acknowledgeReveal(playerID string) error {
-	if g.Reveal == nil || g.Reveal.Viewer != playerID {
+	if g.Reveal == nil {
+		return nil
+	}
+	if g.Reveal.Viewer != playerID {
 		return errors.New("there is no reveal for you to hide")
 	}
 	g.Reveal = nil
@@ -641,6 +660,7 @@ func (g *Game) callEnd(playerID string) error {
 	if err := g.requireTurn(playerID, PhaseAwaitDraw); err != nil {
 		return errors.New("you may call the end only at the start of your turn")
 	}
+	g.CalledBy = playerID
 	g.end("called_end")
 	return nil
 }
@@ -665,6 +685,8 @@ func (g *Game) finishTurn() {
 func (g *Game) end(reason string) {
 	g.Phase = PhaseEnded
 	g.EndReason = reason
+	g.RoundEndedAt = time.Now()
+	g.DeadlineAt = time.Time{}
 	g.Drawn = nil
 	g.Reveal = nil
 	g.Gift = nil
@@ -682,6 +704,7 @@ func (g *Game) end(reason string) {
 	}
 	best := int(^uint(0) >> 1)
 	g.WinnerIDs = nil
+	g.LoserIDs = nil
 	g.NextStarterID = ""
 	for _, p := range g.Players {
 		score := playerScore(p)
@@ -694,6 +717,32 @@ func (g *Game) end(reason string) {
 		}
 	}
 	sort.Strings(g.WinnerIDs)
+	if g.CalledBy != "" && !containsString(g.WinnerIDs, g.CalledBy) {
+		g.LoserIDs = []string{g.CalledBy}
+		return
+	}
+	worst := -1 << 30
+	for _, p := range g.Players {
+		score := playerScore(p)
+		if score > worst {
+			worst = score
+		}
+	}
+	for _, p := range g.Players {
+		if playerScore(p) == worst && !containsString(g.WinnerIDs, p.ID) {
+			g.LoserIDs = append(g.LoserIDs, p.ID)
+		}
+	}
+	sort.Strings(g.LoserIDs)
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 type actionError struct {
@@ -735,6 +784,10 @@ func (g *Game) View(viewerID string) Snapshot {
 		HasDrawnCard:     g.Drawn != nil,
 		EndReason:        g.EndReason,
 		WinnerIDs:        g.WinnerIDs,
+		LoserIDs:         g.LoserIDs,
+	}
+	if !g.DeadlineAt.IsZero() && g.TimeoutKey() != "" {
+		view.DeadlineAt = g.DeadlineAt.UnixMilli()
 	}
 	if viewer != nil {
 		view.You = Identity{ID: viewer.ID, Name: viewer.Name}

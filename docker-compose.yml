@@ -15,6 +15,11 @@ services:
       DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
       DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
       ALLOW_GUESTS: ${ALLOW_GUESTS:-false}
+      DB_PATH: ${DB_PATH:-/data/kabo.sqlite}
+      KABO_TURN_TIMEOUT: ${KABO_TURN_TIMEOUT:-15s}
+      KABO_REVEAL_TIMEOUT: ${KABO_REVEAL_TIMEOUT:-3s}
+    volumes:
+      - kabo-data:/data
     restart: unless-stopped
     init: true
     healthcheck:
@@ -32,4 +37,7 @@ services:
 networks:
   pangolin:
     external: true
+
+volumes:
+  kabo-data:
     

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"kabo/server/auth"
+	"kabo/server/persistence"
 	"kabo/server/transport"
 
 	"github.com/gorilla/websocket"
@@ -30,9 +31,20 @@ type server struct {
 
 func main() {
 	port := env("PORT", "8080")
+	results, err := persistence.Open(env("DB_PATH", "./kabo.sqlite"))
+	if err != nil {
+		log.Fatalf("open results database: %v", err)
+	}
+	defer results.Close()
 
 	s := &server{
-		rooms:    transport.NewManager(),
+		rooms: transport.NewManager(transport.ManagerConfig{
+			Timeouts: transport.TimeoutConfig{
+				Turn:   durationEnv("KABO_TURN_TIMEOUT", transport.DefaultTurnTimeout),
+				Reveal: durationEnv("KABO_REVEAL_TIMEOUT", transport.DefaultRevealTimeout),
+			},
+			Results: results,
+		}),
 		sessions: auth.NewSessions(),
 		discord: auth.Discord{
 			ClientID:     os.Getenv("DISCORD_CLIENT_ID"),
@@ -242,4 +254,17 @@ func env(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func durationEnv(key string, fallback time.Duration) time.Duration {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil || duration <= 0 {
+		log.Printf("invalid %s=%q; using %s", key, value, fallback)
+		return fallback
+	}
+	return duration
 }

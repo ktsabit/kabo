@@ -16,6 +16,26 @@ import { initializePlatform, type PlatformSession, websocketURL } from "./platfo
 
 type ConnectionState = "connecting" | "open" | "closed";
 
+type ActionAnchor = {
+  element: HTMLElement;
+  rect: DOMRect;
+};
+
+type ActionGeometry = {
+  first?: ActionAnchor;
+  second?: ActionAnchor;
+  target?: ActionAnchor;
+  discard?: ActionAnchor;
+  drawnPosition?: DOMRect;
+};
+
+type QueuedAction = {
+  action: ActionView;
+  geometry: ActionGeometry;
+};
+
+const DOUBLE_TAP_WINDOW = 360;
+
 function App() {
   const [platform, setPlatform] = useState<PlatformSession>();
   const [snapshot, setSnapshot] = useState<SnapshotMessage>();
@@ -25,18 +45,18 @@ function App() {
   const [swapSelection, setSwapSelection] = useState<CardRef[]>([]);
   const socket = useRef<WebSocket | undefined>(undefined);
   const lastActionID = useRef(0);
-  const actionQueue = useRef<ActionView[]>([]);
+  const actionQueue = useRef<QueuedAction[]>([]);
   const animationRunning = useRef(false);
   const animationPumpFrame = useRef<number | undefined>(undefined);
 
   const pumpActionQueue = () => {
     animationPumpFrame.current = undefined;
     if (animationRunning.current) return;
-    const action = actionQueue.current.shift();
-    if (!action) return;
+    const queued = actionQueue.current.shift();
+    if (!queued) return;
 
     animationRunning.current = true;
-    void animateAction(action)
+    void animateAction(queued.action, queued.geometry)
       .catch((error: unknown) => console.error("Kabo action animation failed", error))
       .finally(() => {
         animationRunning.current = false;
@@ -58,7 +78,7 @@ function App() {
     }
     if (action.id <= lastActionID.current) return;
     lastActionID.current = action.id;
-    actionQueue.current.push(action);
+    actionQueue.current.push({ action, geometry: captureActionGeometry(action) });
     // Keep the UI responsive if a reconnect or a burst of slaps delivers a lot
     // of authoritative actions at once. The latest state is already rendered;
     // old movement animations are only visual history.
@@ -142,9 +162,10 @@ function App() {
 
   useEffect(() => {
     if (!snapshot?.reveal || snapshot.reveal.kind === "initial") return;
-    const timer = window.setTimeout(() => send({ type: "acknowledge_reveal" }), 3000);
+    const delay = snapshot.deadlineAt ? Math.max(0, snapshot.deadlineAt - Date.now()) : 3000;
+    const timer = window.setTimeout(() => send({ type: "acknowledge_reveal" }), delay);
     return () => window.clearTimeout(timer);
-  }, [send, revealKey]);
+  }, [send, revealKey, snapshot?.deadlineAt]);
 
   const chooseSwap = (target: CardRef) => {
     if (!snapshot || snapshot.phase !== "await_swap" || snapshot.currentPlayerId !== snapshot.you.id) return;
@@ -180,6 +201,11 @@ function App() {
   const slap = (target: CardRef) => {
     if (snapshot?.youRole !== "active" || !snapshot.discardEventId) return;
     send({ type: "slap", eventId: snapshot.discardEventId, target });
+  };
+
+  const canDiscardDrawn = Boolean(snapshot?.drawnCard && snapshot.phase === "await_choice" && snapshot.currentPlayerId === snapshot.you.id);
+  const discardDrawn = () => {
+    if (canDiscardDrawn) send({ type: "discard_drawn" });
   };
 
   const dropToSlap = (event: React.DragEvent<HTMLDivElement>) => {
@@ -219,6 +245,7 @@ function App() {
   const isSpectator = snapshot.youRole === "spectator";
   const isMyTurn = snapshot.currentPlayerId === snapshot.you.id;
   const winnerNames = snapshot.players.filter((player) => snapshot.winnerIds?.includes(player.id)).map((player) => player.name);
+  const loserNames = snapshot.players.filter((player) => snapshot.loserIds?.includes(player.id)).map((player) => player.name);
 
   return (
     <main className="app-shell">
@@ -262,24 +289,30 @@ function App() {
                   {snapshot.phase !== "ended" && snapshot.hasDrawnCard && (
                     <div className="drawn-card-zone">
                       {snapshot.drawnCard ? <PlayingCard card={snapshot.drawnCard} compact /> : <CardBack compact />}
-                      {snapshot.drawnCard && (
-                        <button className="discard-action" onClick={() => send({ type: "discard_drawn" })} title={`Discard ${cardLabel(snapshot.drawnCard)}`}>
-                          DISCARD
-                        </button>
-                      )}
                     </div>
                   )}
                 </div>
-                <div className="discard-wrap">
+                <div
+                  className={`discard-wrap ${canDiscardDrawn ? "can-discard" : ""}`}
+                  role={canDiscardDrawn ? "button" : undefined}
+                  tabIndex={canDiscardDrawn ? 0 : undefined}
+                  aria-label={canDiscardDrawn ? "Discard drawn card" : "Discard pile"}
+                  onClick={canDiscardDrawn ? discardDrawn : undefined}
+                  onKeyDown={(event) => {
+                    if (canDiscardDrawn && (event.key === "Enter" || event.key === " ")) {
+                      event.preventDefault();
+                      discardDrawn();
+                    }
+                  }}
+                >
                   {snapshot.discardTop ? <PlayingCard card={snapshot.discardTop} compact /> : <div className="empty-discard">Discard</div>}
                   <small>DISCARD</small>
                 </div>
               </div>
               {snapshot.phase === "ended"
-                ? <RoundSummary snapshot={snapshot} winners={winnerNames} send={send} canStart={!isSpectator} />
+                ? <RoundSummary snapshot={snapshot} winners={winnerNames} losers={loserNames} send={send} canStart={!isSpectator} />
                 : <>
                   <TurnPrompt snapshot={snapshot} isMyTurn={isMyTurn} />
-                  {isSpectator && <SpectatorNotice joiningNextRound={snapshot.nextRoundJoined} />}
                 </>}
             </div>
 
@@ -368,10 +401,6 @@ function ReadyRoster({ snapshot, send }: { snapshot: SnapshotMessage; send: (mes
   );
 }
 
-function SpectatorNotice({ joiningNextRound }: { joiningNextRound: boolean }) {
-  return <div className="spectator-notice"><span className="spectator-eye">◉</span> {joiningNextRound ? "Queued" : "Spectating"}</div>;
-}
-
 function Lobby({ snapshot, platform, send }: { snapshot: SnapshotMessage; platform: PlatformSession; send: (message: ClientMessage) => void }) {
   const canStart = snapshot.youRole === "active" && snapshot.allReady;
   const players = snapshot.nextRoundPlayers;
@@ -392,7 +421,7 @@ function Lobby({ snapshot, platform, send }: { snapshot: SnapshotMessage; platfo
   );
 }
 
-function RoundSummary({ snapshot, winners, send, canStart }: { snapshot: SnapshotMessage; winners: string[]; send: (message: ClientMessage) => void; canStart: boolean }) {
+function RoundSummary({ snapshot, winners, losers, send, canStart }: { snapshot: SnapshotMessage; winners: string[]; losers: string[]; send: (message: ClientMessage) => void; canStart: boolean }) {
   const players = snapshot.nextRoundPlayers;
   const readyCount = players.filter((player) => player.ready).length;
   const starter = snapshot.nextStarterId ? rosterName(snapshot, snapshot.nextStarterId) : undefined;
@@ -401,6 +430,7 @@ function RoundSummary({ snapshot, winners, send, canStart }: { snapshot: Snapsho
     <div className="round-summary next-round-lobby">
       <span className="eyebrow">ROUND COMPLETE</span>
       <strong>{winners.join(" & ")} {winners.length === 1 ? "wins" : "tie"}</strong>
+      {losers.length > 0 && <small className="loser-note">Loser · {losers.join(" & ")}</small>}
       <small>{endReason(snapshot.endReason)}</small>
       {starter && <small className="starter-note">{starter} starts</small>}
       {canJoin && <button className="join-next-round summary-join" onClick={() => send({ type: "set_next_round", joinNextRound: true })}>Join</button>}
@@ -439,11 +469,16 @@ function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInit
     if (tap.current?.timer) window.clearTimeout(tap.current.timer);
   }, []);
 
+  useEffect(() => {
+    if (tap.current?.timer) window.clearTimeout(tap.current.timer);
+    tap.current = undefined;
+  }, [snapshot.phase, snapshot.discardEventId, snapshot.action?.id]);
+
   const handleTap = (target: CardRef) => {
     if (dragging.current || !canInteract) return;
     const key = refKey(target);
     const now = Date.now();
-    if (tap.current?.key === key && now - tap.current.at < 320) {
+    if (tap.current?.key === key && now - tap.current.at < DOUBLE_TAP_WINDOW) {
       if (tap.current.timer) window.clearTimeout(tap.current.timer);
       tap.current = undefined;
       onSlap(target);
@@ -451,10 +486,14 @@ function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInit
     }
     if (tap.current?.timer) window.clearTimeout(tap.current.timer);
     const timer = window.setTimeout(() => {
+      if (dragging.current) {
+        tap.current = undefined;
+        return;
+      }
       if (giftMode) onGift(target.slot);
       else onCard(target);
       tap.current = undefined;
-    }, 260);
+    }, DOUBLE_TAP_WINDOW);
     tap.current = { key, at: now, timer };
   };
 
@@ -484,14 +523,16 @@ function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInit
           const power = canInteract ? powerHint(snapshot, target, slot.occupied) : undefined;
           const peekedByOther = snapshot.publicPeek?.viewerId !== snapshot.you.id && snapshot.publicPeek && sameRef(snapshot.publicPeek.target, target);
           return (
-            <div className={`slot-wrap ${isSelected ? "selected" : ""} ${revealed ? "is-revealed" : ""} ${peekedByOther ? "peek-observed" : ""} ${power ? `power-target power-${power}` : ""}`} key={slot.slot} data-card-ref={refKey(target)}>
+            <div className={`slot-wrap ${!slot.occupied ? "empty-slot-anchor" : ""} ${isSelected ? "selected" : ""} ${revealed ? "is-revealed" : ""} ${peekedByOther ? "peek-observed" : ""} ${power ? `power-target power-${power}` : ""}`} key={slot.slot} data-card-ref={refKey(target)}>
               <button
                 className="card-button"
                 disabled={!slot.occupied || !canInteract}
                 draggable={slot.occupied && canInteract}
                 aria-label={`${mine ? "Your" : player.name}'s card ${slot.slot + 1}${power ? ` · ${power === "peek" ? "peek target" : "swap target"}` : ""}`}
                 onClick={(event) => { if (event.detail === 0) giftMode ? onGift(slot.slot) : onCard(target); }}
-                onPointerUp={() => handleTap(target)}
+                onPointerDown={(event) => {
+                  if (event.isPrimary && event.button === 0) handleTap(target);
+                }}
                 onDragStart={(event) => {
                   dragging.current = true;
                   event.dataTransfer.setData("application/x-cambio-card", JSON.stringify(target));
@@ -518,15 +559,36 @@ function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInit
 }
 
 function TurnPrompt({ snapshot, isMyTurn }: { snapshot: SnapshotMessage; isMyTurn: boolean }) {
-  if (!isMyTurn) return null;
+  const canGift = snapshot.phase === "await_gift" && snapshot.pendingGift?.slapperId === snapshot.you.id;
+  const waitingForInitialReady = snapshot.phase === "initial_peek" && snapshot.reveal?.kind === "initial" && snapshot.players.some((player) => player.id === snapshot.you.id && player.initialReady === false);
+  if (!isMyTurn && !canGift && !waitingForInitialReady) return null;
   let prompt = "";
-  if (isMyTurn && snapshot.phase === "await_self_peek") prompt = "Peek at one of your cards";
-  if (isMyTurn && snapshot.phase === "await_opponent_peek") prompt = "Peek at one opponent card";
-  if (isMyTurn && snapshot.phase === "await_king_peek") prompt = "King: peek at an opponent card";
-  if (isMyTurn && snapshot.phase === "await_swap") prompt = "Choose any two occupied cards to swap";
-  if (snapshot.phase === "await_gift" && snapshot.pendingGift?.slapperId === snapshot.you.id) prompt = "Choose one card to give";
+  if (waitingForInitialReady) prompt = "Ready";
+  if (isMyTurn && snapshot.phase === "await_draw") prompt = "Draw";
+  if (isMyTurn && snapshot.phase === "await_choice") prompt = "Choose";
+  if (isMyTurn && (snapshot.phase === "await_self_peek" || snapshot.phase === "await_opponent_peek" || snapshot.phase === "await_king_peek")) prompt = "Peek";
+  if (isMyTurn && snapshot.phase === "await_swap") prompt = "Swap";
+  if (canGift) prompt = "Give";
   if (!prompt) return null;
-  return <div className="turn-prompt"><span className={isMyTurn ? "pulse" : ""} />{prompt}</div>;
+  return <div className="turn-prompt"><span className={isMyTurn || canGift || waitingForInitialReady ? "pulse" : ""} /><b>{prompt}</b><TurnCountdown deadlineAt={snapshot.deadlineAt} /></div>;
+}
+
+function TurnCountdown({ deadlineAt }: { deadlineAt?: number }) {
+  const [seconds, setSeconds] = useState<number>();
+
+  useEffect(() => {
+    if (!deadlineAt) {
+      setSeconds(undefined);
+      return;
+    }
+    const update = () => setSeconds(Math.max(0, Math.ceil((deadlineAt - Date.now()) / 1000)));
+    update();
+    const timer = window.setInterval(update, 200);
+    return () => window.clearInterval(timer);
+  }, [deadlineAt]);
+
+  if (seconds === undefined) return null;
+  return <time className={`turn-countdown ${seconds <= 3 ? "urgent" : ""}`} aria-label={`${seconds} seconds remaining`}>{seconds}s</time>;
 }
 
 function PlayingCard({ card, compact = false, flipped = false }: { card: Card; compact?: boolean; flipped?: boolean }) {
@@ -579,23 +641,46 @@ function uSeatStyle(index: number, total: number): CSSProperties {
   return { "--u-x": `${x}%`, "--u-y": `${y}%`, "--u-scale": scale } as CSSProperties;
 }
 
-async function animateAction(action: ActionView): Promise<void> {
+function captureActionGeometry(action: ActionView): ActionGeometry {
+  return {
+    first: action.first ? captureAnchor(action.first) : undefined,
+    second: action.second ? captureAnchor(action.second) : undefined,
+    target: action.target ? captureAnchor(action.target) : undefined,
+    discard: captureElementAnchor(document.querySelector<HTMLElement>(".discard-wrap .playing-card")),
+    drawnPosition: document.querySelector<HTMLElement>(".drawn-card-position")?.getBoundingClientRect(),
+  };
+}
+
+function captureAnchor(target: CardRef): ActionAnchor | undefined {
+  const slot = slotFor(target);
+  if (!slot) return undefined;
+  const element = slot.querySelector<HTMLElement>(".playing-card, .card-back") ?? slot;
+  return captureElementAnchor(element);
+}
+
+function captureElementAnchor(element: HTMLElement | null): ActionAnchor | undefined {
+  if (!element) return undefined;
+  return { element: element.cloneNode(true) as HTMLElement, rect: element.getBoundingClientRect() };
+}
+
+async function animateAction(action: ActionView, geometry: ActionGeometry): Promise<void> {
   switch (action.kind) {
     case "wrong_slap":
-      return animateWrongSlap(action);
+      return animateWrongSlap(action, geometry);
     case "swap":
-      if (action.first && action.second) return animateSwap(action.first, action.second);
+      if (geometry.first && geometry.second) return animateSwap(geometry.first, geometry.second);
       return;
     case "replace":
-      if (action.target) return animateReplace(action.target);
+      if (geometry.target && geometry.discard && geometry.drawnPosition) return animateReplace(geometry.target, geometry.discard, geometry.drawnPosition);
       return;
     case "discard":
-      return animateDiscard();
+      if (geometry.discard && geometry.drawnPosition) return animateDiscard(geometry.discard, geometry.drawnPosition);
+      return;
     case "slap":
-      if (action.target) return animateSlap(action.target);
+      if (geometry.target && geometry.discard) return animateSlap(geometry.target, geometry.discard);
       return;
     case "gift":
-      if (action.first && action.second) return animateGift(action.first, action.second);
+      if (geometry.first && geometry.second) return animateGift(geometry.first, geometry.second);
       return;
   }
 }
@@ -604,64 +689,46 @@ function slotFor(target: CardRef): HTMLElement | undefined {
   return [...document.querySelectorAll<HTMLElement>("[data-card-ref]")].find((slot) => slot.dataset.cardRef === refKey(target));
 }
 
-function cardFor(target: CardRef): HTMLElement | undefined {
-  return slotFor(target)?.querySelector<HTMLElement>(".playing-card, .card-back") ?? undefined;
-}
-
-function animateSwap(first: CardRef, second: CardRef): Promise<void> {
-  const a = cardFor(first);
-  const b = cardFor(second);
-  if (!a || !b) return Promise.resolve();
-  const aRect = a.getBoundingClientRect();
-  const bRect = b.getBoundingClientRect();
+function animateSwap(first: ActionAnchor, second: ActionAnchor): Promise<void> {
   return Promise.all([
-    flyCard(a, bRect, aRect, -28, 0, 820),
-    flyCard(b, aRect, bRect, 28, 0, 820),
+    flyCard(first.element, second.rect, first.rect, -28, 0, 820),
+    flyCard(second.element, first.rect, second.rect, 28, 0, 820),
   ]).then(() => undefined);
 }
 
-function animateReplace(target: CardRef): Promise<void> {
-  const targetCard = cardFor(target);
-  const discardCard = document.querySelector<HTMLElement>(".discard-wrap .playing-card");
-  const drawnPosition = document.querySelector<HTMLElement>(".drawn-card-position");
-  if (!targetCard || !discardCard || !drawnPosition) return Promise.resolve();
-  const targetRect = targetCard.getBoundingClientRect();
-  const discardRect = discardCard.getBoundingClientRect();
-  const drawnRect = drawnPosition.getBoundingClientRect();
+function animateReplace(target: ActionAnchor, discard: ActionAnchor, drawnPosition: DOMRect): Promise<void> {
   return Promise.all([
-    flyCard(discardCard, targetRect, discardRect, -30, 0, 680),
-    flyCard(targetCard, drawnRect, targetRect, 34, 95, 760),
+    flyCard(discard.element, target.rect, discard.rect, -30, 0, 680),
+    flyCard(target.element, drawnPosition, target.rect, 34, 95, 760),
   ]).then(() => undefined);
 }
 
-function animateDiscard(): Promise<void> {
-  const drawnPosition = document.querySelector<HTMLElement>(".drawn-card-position");
-  const discardCard = document.querySelector<HTMLElement>(".discard-wrap .playing-card");
-  if (!drawnPosition || !discardCard) return Promise.resolve();
-  return flyCard(discardCard, drawnPosition.getBoundingClientRect(), discardCard.getBoundingClientRect(), -22, 0, 620);
+function animateDiscard(discard: ActionAnchor, drawnPosition: DOMRect): Promise<void> {
+  return flyCard(discard.element, drawnPosition, discard.rect, -22, 0, 620);
 }
 
-function animateSlap(target: CardRef): Promise<void> {
-  const source = slotFor(target);
-  const discardCard = document.querySelector<HTMLElement>(".discard-wrap .playing-card");
-  if (!source || !discardCard) return Promise.resolve();
-  return flyCard(discardCard, source.getBoundingClientRect(), discardCard.getBoundingClientRect(), -38, 0, 680);
+function animateSlap(target: ActionAnchor, discard: ActionAnchor): Promise<void> {
+  return flyCard(discard.element, target.rect, discard.rect, -38, 0, 680);
 }
 
-function animateWrongSlap(action: ActionView): Promise<void> {
+function animateWrongSlap(action: ActionView, geometry: ActionGeometry): Promise<void> {
   if (!action.target || !action.card) {
     animateWrongSlapShake(action.actorId);
     return Promise.resolve();
   }
-  const source = slotFor(action.target);
   const discard = document.querySelector<HTMLElement>(".discard-wrap");
-  if (!source || !discard) {
+  const source = slotFor(action.target);
+  if (!discard || (!geometry.target && !source)) {
     animateWrongSlapShake(action.actorId);
     return Promise.resolve();
   }
 
-  const sourceCard = source.querySelector<HTMLElement>(".playing-card, .card-back, .empty-slot");
-  const from = (sourceCard ?? source).getBoundingClientRect();
+  const sourceCard = source?.querySelector<HTMLElement>(".playing-card, .card-back, .empty-slot");
+  const from = geometry.target?.rect ?? sourceCard?.getBoundingClientRect() ?? source?.getBoundingClientRect();
+  if (!from) {
+    animateWrongSlapShake(action.actorId);
+    return Promise.resolve();
+  }
   const discardRect = discard.getBoundingClientRect();
   const width = from.width || 70;
   const height = from.height || width * 1.4;
@@ -716,21 +783,20 @@ function animateWrongSlap(action: ActionView): Promise<void> {
 function animateWrongSlapShake(playerID: string) {
   const area = [...document.querySelectorAll<HTMLElement>(".player-area")].find((item) => item.dataset.playerId === playerID);
   if (!area) return;
+  const baseTransform = getComputedStyle(area).transform;
+  const withOffset = (x: number, rotation = 0) => `${baseTransform === "none" ? "" : `${baseTransform} `}translateX(${x}px) rotate(${rotation}deg)`;
   area.animate([
-    { transform: "translateX(0)", filter: "drop-shadow(0 0 0 rgba(255,75,75,0))" },
-    { transform: "translateX(-9px) rotate(-1deg)", filter: "drop-shadow(0 0 24px rgba(255,75,75,.95))", background: "rgba(255,75,75,.18)" },
-    { transform: "translateX(8px) rotate(1deg)", filter: "drop-shadow(0 0 30px rgba(255,75,75,.9))", background: "rgba(255,75,75,.22)" },
-    { transform: "translateX(-6px)", filter: "drop-shadow(0 0 18px rgba(255,75,75,.65))" },
-    { transform: "translateX(4px)" },
-    { transform: "translateX(0)", filter: "drop-shadow(0 0 0 rgba(255,75,75,0))", background: "transparent" },
+    { transform: withOffset(0), filter: "drop-shadow(0 0 0 rgba(255,75,75,0))" },
+    { transform: withOffset(-9, -1), filter: "drop-shadow(0 0 24px rgba(255,75,75,.95))", background: "rgba(255,75,75,.18)" },
+    { transform: withOffset(8, 1), filter: "drop-shadow(0 0 30px rgba(255,75,75,.9))", background: "rgba(255,75,75,.22)" },
+    { transform: withOffset(-6), filter: "drop-shadow(0 0 18px rgba(255,75,75,.65))" },
+    { transform: withOffset(4) },
+    { transform: withOffset(0), filter: "drop-shadow(0 0 0 rgba(255,75,75,0))", background: "transparent" },
   ], { duration: 620, easing: "ease-out" });
 }
 
-function animateGift(source: CardRef, target: CardRef): Promise<void> {
-  const sourceSlot = slotFor(source);
-  const targetCard = cardFor(target);
-  if (!sourceSlot || !targetCard) return Promise.resolve();
-  return flyCard(targetCard, sourceSlot.getBoundingClientRect(), targetCard.getBoundingClientRect(), 28, 0, 720);
+function animateGift(source: ActionAnchor, target: ActionAnchor): Promise<void> {
+  return flyCard(source.element, target.rect, source.rect, 28, 0, 720);
 }
 
 function flyCard(card: HTMLElement, from: DOMRect, to: DOMRect, arc: number, delay: number, duration: number): Promise<void> {

@@ -105,6 +105,7 @@ type Snapshot struct {
 	Players          []PlayerView       `json:"players"`
 	DrawPileCount    int                `json:"drawPileCount"`
 	HasDrawnCard     bool               `json:"hasDrawnCard"`
+	DeadlineAt       int64              `json:"deadlineAt,omitempty"`
 	DiscardTop       *Card              `json:"discardTop,omitempty"`
 	DiscardEventID   int                `json:"discardEventId,omitempty"`
 	DrawnCard        *Card              `json:"drawnCard,omitempty"`
@@ -114,6 +115,7 @@ type Snapshot struct {
 	PendingGift      *GiftView          `json:"pendingGift,omitempty"`
 	EndReason        string             `json:"endReason,omitempty"`
 	WinnerIDs        []string           `json:"winnerIds,omitempty"`
+	LoserIDs         []string           `json:"loserIds,omitempty"`
 }
 
 type Identity struct {

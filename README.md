@@ -5,7 +5,7 @@ A playable, server-authoritative Kabo card game. It runs as a normal web app for
 ## What is implemented
 
 - Two to eight active players in in-memory rooms, with read-only spectators who can queue for the next round.
-- Four face-down cards per player, arranged 2×2; each player privately sees their bottom two once.
+- Four face-down cards per player, shown as a compact horizontal hand that closes gaps after cards leave.
 - Draw, replace, or discard turns.
 - 7/8 own peek, 9/10 opponent peek, J/Q any-two-card swap, and K opponent peek followed by any-two-card swap.
 - Server-ordered slap races for every new discard. The first valid slap wins; later stale or incorrect slaps add a penalty and show the card briefly to everyone.
@@ -17,6 +17,9 @@ A playable, server-authoritative Kabo card game. It runs as a normal web app for
 - Reconnect support for the same player identity and ready-gated rematches.
 - Mid-round spectators, a compact next-round roster capped at eight, and automatic promotion into the next round.
 - Lobby readiness checks for every selected player, with the previous round's winner starting the next round.
+- Configurable server deadlines: 15 seconds for turn phases and 3 seconds for reveal acknowledgement by default; a drawn card is discarded automatically when possible, otherwise the turn advances.
+- SQLite round history with player scores, winners, losers, Kabo callers, and failed Kabo calls.
+- Flowing power/discard indicators, queued slap animations, face-up late/wrong slap penalty flights, and a responsive table shell for narrow or short Discord viewports.
 
 Card faces use the CC0-licensed [`@letele/playing-cards`](https://github.com/letele/playing-cards) SVG deck, based on Adrian Kennard's classic designs. The custom indigo bear artwork remains the card back.
 
@@ -69,7 +72,7 @@ cp .env.example .env
 docker compose up --build -d
 ```
 
-The app is available at `http://localhost:8080`. Stop it with `docker compose down`. The Compose setup keeps the app at one replica because rooms and sessions are stored in memory.
+The app is available at `http://localhost:8080`. Stop it with `docker compose down`. Round results persist in the `kabo-data` volume, while live rooms and sessions remain in memory.
 
 The Activity reads the public Discord Application ID from the running server, so it does not need to be baked into the browser bundle. A direct Docker build is enough:
 
@@ -87,7 +90,7 @@ docker run --rm -p 8080:8080 \
   kabo
 ```
 
-Choose a Docker host that provides a public HTTPS domain, forwards WebSocket upgrades, keeps one process alive, and sends traffic to port 8080. Keep this MVP at exactly **one replica** with no scale-to-zero: rooms and sessions are in memory, so restarts erase them and multiple replicas would split players unless Redis or a durable room service is added first.
+Choose a Docker host that provides a public HTTPS domain, forwards WebSocket upgrades, keeps one process alive, and sends traffic to port 8080. Keep this MVP at exactly **one replica** with no scale-to-zero: live rooms and sessions are in memory, so restarts erase active games and multiple replicas would split players unless Redis or a durable room service is added first. Set `DB_PATH`, `KABO_TURN_TIMEOUT`, and `KABO_REVEAL_TIMEOUT` in Compose when needed.
 
 ### Cloudflare hosting
 
@@ -122,7 +125,8 @@ Discord Activities route network traffic through their proxy. WebSockets are sup
 - A successful slap creates a new discard event, allowing same-rank slap chains. If it targets an opponent, that gift is resolved before the next slap in the chain.
 - The active turn is completed before an empty draw pile ends the round, except when a penalty needs a card and none remains.
 - A round starts only when every selected player is connected and ready; the previous winner gets the first turn when they join the next round.
+- A failed Kabo call marks the caller as the loser even if another player has a higher score; the lowest score still determines the winner.
 
 ## Deliberately deferred
 
-Persistent rooms/history, server restarts without data loss, a timed slap window, moderation controls, sounds/animation polish, telemetry, and horizontal scaling are post-MVP work. Moving rooms to Redis (or a durable room actor) is the natural next backend step.
+Persistent live rooms across server restarts, a timed slap window, moderation controls, telemetry, and horizontal scaling are post-MVP work. Moving rooms to Redis (or a durable room actor) is the natural next backend step; SQLite currently preserves completed round results only.

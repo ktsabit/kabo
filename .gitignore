@@ -4,6 +4,6 @@ client/dist/
 .env
 .env.local
 server/cambio-server
+server/*.sqlite*
 *.log
 .DS_Store
-

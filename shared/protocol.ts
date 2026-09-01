@@ -91,6 +91,7 @@ export interface SnapshotMessage {
   players: PlayerView[];
   drawPileCount: number;
   hasDrawnCard: boolean;
+  deadlineAt?: number;
   discardTop?: Card;
   discardEventId?: number;
   drawnCard?: Card;
@@ -100,6 +101,7 @@ export interface SnapshotMessage {
   pendingGift?: GiftView;
   endReason?: string;
   winnerIds?: string[];
+  loserIds?: string[];
 }
 
 export interface ErrorMessage {
