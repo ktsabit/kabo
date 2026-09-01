@@ -1,4 +1,5 @@
 import { Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import type {
   ActionView,
@@ -31,7 +32,12 @@ type ActionGeometry = {
 
 type QueuedAction = {
   action: ActionView;
-  geometry: ActionGeometry;
+  snapshot: SnapshotMessage;
+};
+
+type ActionVisualHold = {
+  id: number;
+  release: () => void;
 };
 
 const DOUBLE_TAP_WINDOW = 360;
@@ -44,10 +50,20 @@ function App() {
   const [notice, setNotice] = useState<string>();
   const [swapSelection, setSwapSelection] = useState<CardRef[]>([]);
   const socket = useRef<WebSocket | undefined>(undefined);
+  const renderedSnapshot = useRef<SnapshotMessage | undefined>(undefined);
   const lastActionID = useRef(0);
   const actionQueue = useRef<QueuedAction[]>([]);
   const animationRunning = useRef(false);
+  const runningActionID = useRef<number | undefined>(undefined);
   const animationPumpFrame = useRef<number | undefined>(undefined);
+  const actionVisualHold = useRef<ActionVisualHold | undefined>(undefined);
+  const deferredSnapshot = useRef<SnapshotMessage | undefined>(undefined);
+
+  const renderSnapshot = (next: SnapshotMessage, synchronous = false) => {
+    renderedSnapshot.current = next;
+    if (synchronous) flushSync(() => setSnapshot(next));
+    else setSnapshot(next);
+  };
 
   const pumpActionQueue = () => {
     animationPumpFrame.current = undefined;
@@ -55,11 +71,30 @@ function App() {
     const queued = actionQueue.current.shift();
     if (!queued) return;
 
+    const geometry = captureActionGeometry(queued.action);
+    const heldActivePlayerID = renderedSnapshot.current?.currentPlayerId;
+    document.documentElement.classList.add("action-in-flight");
     animationRunning.current = true;
-    void animateAction(queued.action, queued.geometry)
+    runningActionID.current = queued.action.id;
+    renderSnapshot(queued.snapshot, true);
+    const hold: ActionVisualHold = { id: queued.action.id, release: holdActionVisuals(queued.action, heldActivePlayerID) };
+    actionVisualHold.current?.release();
+    actionVisualHold.current = hold;
+
+    void animateAction(queued.action, geometry)
       .catch((error: unknown) => console.error("Kabo action animation failed", error))
       .finally(() => {
+        const deferred = deferredSnapshot.current;
+        if (deferred) {
+          deferredSnapshot.current = undefined;
+          renderSnapshot(deferred, true);
+        }
+        if (actionVisualHold.current?.id === queued.action.id) {
+          actionVisualHold.current.release();
+          actionVisualHold.current = undefined;
+        }
         animationRunning.current = false;
+        runningActionID.current = undefined;
         if (actionQueue.current.length === 0) document.documentElement.classList.remove("action-in-flight");
         if (actionQueue.current.length > 0) scheduleActionPump();
       });
@@ -70,24 +105,40 @@ function App() {
     animationPumpFrame.current = window.requestAnimationFrame(pumpActionQueue);
   };
 
-  const queueAction = (action: ActionView) => {
+  const queueSnapshot = (next: SnapshotMessage) => {
+    const action = next.action;
+    if (!renderedSnapshot.current) {
+      lastActionID.current = action?.id ?? 0;
+      renderSnapshot(next);
+      return;
+    }
+
+    if (!action) {
+      if (animationRunning.current || actionQueue.current.length > 0) deferredSnapshot.current = next;
+      else renderSnapshot(next);
+      return;
+    }
+
     // A process restart can recreate a room with fresh cursors. Do not let a
     // stale local cursor suppress every action from the new server instance.
     if (action.id < lastActionID.current) {
-      lastActionID.current = 0;
       actionQueue.current.length = 0;
+      lastActionID.current = action.id;
+      if (animationRunning.current) deferredSnapshot.current = next;
+      else renderSnapshot(next);
+      return;
     }
-    if (action.id <= lastActionID.current) return;
+
+    if (action.id === lastActionID.current) {
+      const waiting = actionQueue.current.find((item) => item.action.id === action.id);
+      if (waiting) waiting.snapshot = next;
+      else if (runningActionID.current === action.id) deferredSnapshot.current = next;
+      else if (!animationRunning.current && actionQueue.current.length === 0) renderSnapshot(next);
+      return;
+    }
+
     lastActionID.current = action.id;
-    const geometry = captureActionGeometry(action);
-    document.documentElement.classList.add("action-in-flight");
-    actionQueue.current.push({ action, geometry });
-    // Keep the UI responsive if a reconnect or a burst of slaps delivers a lot
-    // of authoritative actions at once. The latest state is already rendered;
-    // old movement animations are only visual history.
-    if (actionQueue.current.length > 8) {
-      actionQueue.current.splice(0, actionQueue.current.length - 8);
-    }
+    actionQueue.current.push({ action, snapshot: next });
     scheduleActionPump();
   };
 
@@ -118,8 +169,7 @@ function App() {
       ws.onmessage = (event) => {
         const message = JSON.parse(String(event.data)) as ServerMessage;
         if (message.type === "snapshot") {
-          if (message.action) queueAction(message.action);
-          setSnapshot(message);
+          queueSnapshot(message);
           return;
         }
         if (message.type === "error") {
@@ -489,9 +539,20 @@ function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInit
   const handleTap = (target: CardRef) => {
     if (dragging.current || !canInteract) return;
     if (snapshot.phase === "await_swap" && snapshot.currentPlayerId === snapshot.you.id) {
+      const key = refKey(target);
+      const now = Date.now();
+      if (tap.current?.key === key && now - tap.current.at < DOUBLE_TAP_WINDOW) {
+        if (tap.current.timer) window.clearTimeout(tap.current.timer);
+        tap.current = undefined;
+        onSlap(target);
+        return;
+      }
       if (tap.current?.timer) window.clearTimeout(tap.current.timer);
-      tap.current = undefined;
       onCard(target);
+      const timer = window.setTimeout(() => {
+        if (tap.current?.key === key) tap.current = undefined;
+      }, DOUBLE_TAP_WINDOW);
+      tap.current = { key, at: now, timer };
       return;
     }
     const key = refKey(target);
@@ -518,6 +579,7 @@ function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInit
 
   const initialRevealHere = mine && snapshot.reveal?.kind === "initial";
   const hasPeekReveal = snapshot.reveal?.kind !== "initial" && Boolean(snapshot.reveal?.cards.some((item) => item.target.playerId === player.id));
+  const penaltyPending = snapshot.phase !== "ended" && snapshot.action?.kind === "wrong_slap" && snapshot.action.actorId === player.id;
   const winner = snapshot.phase === "ended" && snapshot.winnerIds?.includes(player.id);
   return (
     <section ref={area} data-player-id={player.id} style={style} className={`player-area ${mine ? "mine" : ""} ${active ? "active" : ""} ${winner ? "winner" : ""} ${hasPeekReveal ? "has-peek-reveal" : ""} ${snapshot.phase === "ended" ? "cards-revealed" : ""} ${snapshot.phase === "await_choice" && mine ? "replace-mode" : ""}`}>
@@ -545,7 +607,7 @@ function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInit
           const power = canInteract ? powerHint(snapshot, target, slot.occupied) : undefined;
           const peekedByOther = snapshot.publicPeek?.viewerId !== snapshot.you.id && snapshot.publicPeek && sameRef(snapshot.publicPeek.target, target);
           return (
-            <div className={`slot-wrap ${!slot.occupied ? "empty-slot-anchor" : ""} ${isSelected ? "selected" : ""} ${revealed ? "is-revealed" : ""} ${peekReveal ? "peek-reveal" : ""} ${peekedByOther ? "peek-observed" : ""} ${power ? `power-target power-${power}` : ""}`} key={slot.slot} data-card-ref={refKey(target)}>
+            <div className={`slot-wrap ${!slot.occupied ? "empty-slot-anchor" : ""} ${penaltyPending && slot.slot === player.cards.length - 1 ? "penalty-card-pending" : ""} ${isSelected ? "selected" : ""} ${revealed ? "is-revealed" : ""} ${peekReveal ? "peek-reveal" : ""} ${peekedByOther ? "peek-observed" : ""} ${power ? `power-target power-${power}` : ""}`} key={slot.slot} data-card-ref={refKey(target)}>
               <button
                 className="card-button"
                 disabled={!slot.occupied || !canInteract}
@@ -718,7 +780,6 @@ function slotFor(target: CardRef): HTMLElement | undefined {
 }
 
 async function animateSwap(firstRef: CardRef, secondRef: CardRef, first: ActionAnchor, second: ActionAnchor): Promise<void> {
-  await waitForLayout();
   const firstDestination = liveCardRect(firstRef);
   const secondDestination = liveCardRect(secondRef);
   if (!firstDestination || !secondDestination) return;
@@ -734,65 +795,56 @@ async function animateSwap(firstRef: CardRef, secondRef: CardRef, first: ActionA
 }
 
 async function animateReplace(action: ActionView, targetRef: CardRef, target: ActionAnchor, discard: ActionAnchor, drawn: ActionAnchor): Promise<void> {
-  await waitForLayout();
   const targetDestination = liveCardRect(targetRef);
   const discardDestination = liveDiscardRect();
   if (!targetDestination || !discardDestination) return;
-  const restore = hideElements([
-    liveCardElement(targetRef),
-    liveDiscardElement(),
-  ]);
+  const releaseDiscard = pinActionCard(discard);
   try {
     await Promise.all([
       flyCard(target.element, target.rect, discardDestination, -30, 0, 680, action.card),
       flyCard(drawn.element, drawn.rect, targetDestination, 34, 95, 760, undefined, true),
     ]);
   } finally {
-    restore();
+    releaseDiscard();
   }
 }
 
-async function animateDiscard(action: ActionView, _discard: ActionAnchor, drawn: ActionAnchor): Promise<void> {
-  await waitForLayout();
+async function animateDiscard(action: ActionView, discard: ActionAnchor, drawn: ActionAnchor): Promise<void> {
   const discardDestination = liveDiscardRect();
   if (!discardDestination) return;
-  const restore = hideElements([liveDiscardElement()]);
+  const releaseDiscard = pinActionCard(discard);
   try {
     await flyCard(drawn.element, drawn.rect, discardDestination, -22, 0, 620, action.card);
   } finally {
-    restore();
+    releaseDiscard();
   }
 }
 
-async function animateSlap(action: ActionView, target: ActionAnchor, _discard: ActionAnchor): Promise<void> {
-  await waitForLayout();
+async function animateSlap(action: ActionView, target: ActionAnchor, discard: ActionAnchor): Promise<void> {
   const discardDestination = liveDiscardRect();
   if (!discardDestination) return;
-  const restore = hideElements([liveDiscardElement()]);
+  const releaseDiscard = pinActionCard(discard);
   try {
     await flyCard(target.element, target.rect, discardDestination, -38, 0, 680, action.card);
   } finally {
-    restore();
+    releaseDiscard();
   }
 }
 
 function animateWrongSlap(action: ActionView, geometry: ActionGeometry): Promise<void> {
   if (!action.target || !action.card) {
-    animateWrongSlapShake(action.actorId);
-    return Promise.resolve();
+    return animateWrongSlapShake(action.actorId);
   }
   const discard = document.querySelector<HTMLElement>(".discard-wrap");
   const source = slotFor(action.target);
   if (!discard || (!geometry.target && !source)) {
-    animateWrongSlapShake(action.actorId);
-    return Promise.resolve();
+    return animateWrongSlapShake(action.actorId);
   }
 
   const sourceCard = source?.querySelector<HTMLElement>(".playing-card, .card-back, .empty-slot");
   const from = geometry.target?.rect ?? sourceCard?.getBoundingClientRect() ?? source?.getBoundingClientRect();
   if (!from) {
-    animateWrongSlapShake(action.actorId);
-    return Promise.resolve();
+    return animateWrongSlapShake(action.actorId);
   }
   const discardRect = discard.getBoundingClientRect();
   const width = from.width || 70;
@@ -816,7 +868,7 @@ function animateWrongSlap(action: ActionView, geometry: ActionGeometry): Promise
   });
   document.body.appendChild(ghost);
   const root = createRoot(ghost);
-  root.render(<PlayingCard card={action.card} compact />);
+  flushSync(() => root.render(<PlayingCard card={action.card!} compact />));
 
   const dx = finalLeft - from.left;
   const dy = finalTop - from.top;
@@ -832,10 +884,13 @@ function animateWrongSlap(action: ActionView, geometry: ActionGeometry): Promise
       if (settled) return;
       settled = true;
       if (fallback !== undefined) window.clearTimeout(fallback);
-      root.unmount();
-      ghost.remove();
-      if (shake) animateWrongSlapShake(action.actorId);
-      resolve();
+      try {
+        root.unmount();
+      } finally {
+        ghost.remove();
+      }
+      if (shake) void animateWrongSlapShake(action.actorId).then(resolve);
+      else resolve();
     };
     const finishWithShake = () => finish(true);
     const cancel = () => finish(false);
@@ -845,9 +900,9 @@ function animateWrongSlap(action: ActionView, geometry: ActionGeometry): Promise
   });
 }
 
-function animateWrongSlapShake(playerID: string) {
+function animateWrongSlapShake(playerID: string): Promise<void> {
   const area = [...document.querySelectorAll<HTMLElement>(".player-area")].find((item) => item.dataset.playerId === playerID);
-  if (!area) return;
+  if (!area) return Promise.resolve();
   const areaRect = area.getBoundingClientRect();
   const flash = document.createElement("div");
   flash.className = "slap-flash";
@@ -855,10 +910,13 @@ function animateWrongSlapShake(playerID: string) {
   flash.style.setProperty("--flash-y", `${areaRect.top + areaRect.height / 2}px`);
   document.body.appendChild(flash);
   const flashAnimation = flash.animate([{ opacity: 0 }, { opacity: 1, offset: .28 }, { opacity: 0 }], { duration: 520, easing: "ease-out" });
-  flashAnimation.addEventListener("finish", () => flash.remove(), { once: true });
+  const removeFlash = () => flash.remove();
+  flashAnimation.addEventListener("finish", removeFlash, { once: true });
+  flashAnimation.addEventListener("cancel", removeFlash, { once: true });
+  window.setTimeout(removeFlash, 720);
   const baseTransform = getComputedStyle(area).transform;
   const withOffset = (x: number, rotation = 0) => `${baseTransform === "none" ? "" : `${baseTransform} `}translateX(${x}px) rotate(${rotation}deg)`;
-  area.animate([
+  const shakeAnimation = area.animate([
     { transform: withOffset(0), filter: "drop-shadow(0 0 0 rgba(255,75,75,0))" },
     { transform: withOffset(-9, -1), filter: "drop-shadow(0 0 30px rgba(255,75,75,.95))" },
     { transform: withOffset(8, 1), filter: "drop-shadow(0 0 38px rgba(255,75,75,.9))" },
@@ -866,18 +924,23 @@ function animateWrongSlapShake(playerID: string) {
     { transform: withOffset(4) },
     { transform: withOffset(0), filter: "drop-shadow(0 0 0 rgba(255,75,75,0))" },
   ], { duration: 620, easing: "ease-out" });
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    shakeAnimation.addEventListener("finish", finish, { once: true });
+    shakeAnimation.addEventListener("cancel", finish, { once: true });
+    window.setTimeout(finish, 760);
+  });
 }
 
 async function animateGift(targetRef: CardRef, source: ActionAnchor): Promise<void> {
-  await waitForLayout();
   const destination = liveCardRect(targetRef);
   if (!destination) return;
-  const restore = hideElements([liveCardElement(targetRef)]);
-  try {
-    await flyCard(source.element, source.rect, destination, 28, 0, 720);
-  } finally {
-    restore();
-  }
+  await flyCard(source.element, source.rect, destination, 28, 0, 720);
 }
 
 function flyCard(card: HTMLElement, from: DOMRect, to: DOMRect, arc: number, delay: number, duration: number, face?: Card, flipToBack = false): Promise<void> {
@@ -892,7 +955,7 @@ function flyCard(card: HTMLElement, from: DOMRect, to: DOMRect, arc: number, del
     back.className = "action-card-layer action-card-back";
     if (face) {
       root = createRoot(front);
-      root.render(<PlayingCard card={face} compact />);
+      flushSync(() => root!.render(<PlayingCard card={face} compact />));
     } else {
       const clone = card.cloneNode(true) as HTMLElement;
       clone.classList.remove("flip-in");
@@ -930,16 +993,16 @@ function flyCard(card: HTMLElement, from: DOMRect, to: DOMRect, arc: number, del
     { width: `${to.width}px`, height: `${to.height}px`, transform: `translate3d(${dx}px, ${dy}px, 0) rotate(0deg)`, opacity: 1 },
   ], { duration, delay, easing: "cubic-bezier(.2,.78,.2,1)", fill: "both" });
   if (flipToBack && front) {
-    const flipDelay = delay + duration * .56;
+    const flipDelay = delay + duration * .68;
     const flipDuration = Math.min(260, duration * .3);
     front.animate([
-      { transform: "rotateY(0deg)", opacity: 1 },
-      { transform: "rotateY(90deg)", opacity: 0 },
+      { transform: "rotateY(0deg)" },
+      { transform: "rotateY(90deg)" },
     ], { duration: flipDuration, delay: flipDelay, easing: "ease-in", fill: "both" });
     const back = ghost.querySelector<HTMLElement>(".action-card-back");
     back?.animate([
-      { transform: "rotateY(-90deg)", opacity: 0 },
-      { transform: "rotateY(0deg)", opacity: 1 },
+      { transform: "rotateY(-90deg)" },
+      { transform: "rotateY(0deg)" },
     ], { duration: flipDuration, delay: flipDelay, easing: "ease-out", fill: "both" });
   }
   return new Promise<void>((resolve) => {
@@ -949,8 +1012,11 @@ function flyCard(card: HTMLElement, from: DOMRect, to: DOMRect, arc: number, del
       if (settled) return;
       settled = true;
       if (fallback !== undefined) window.clearTimeout(fallback);
-      root?.unmount();
-      ghost.remove();
+      try {
+        root?.unmount();
+      } finally {
+        ghost.remove();
+      }
       resolve();
     };
     animation.addEventListener("finish", finish, { once: true });
@@ -959,10 +1025,18 @@ function flyCard(card: HTMLElement, from: DOMRect, to: DOMRect, arc: number, del
   });
 }
 
-function waitForLayout(): Promise<void> {
-  return new Promise((resolve) => {
-    window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()));
+function pinActionCard(anchor: ActionAnchor): () => void {
+  const ghost = document.createElement("div");
+  ghost.className = "action-card-static";
+  ghost.appendChild(anchor.element.cloneNode(true));
+  Object.assign(ghost.style, {
+    left: `${anchor.rect.left}px`,
+    top: `${anchor.rect.top}px`,
+    width: `${anchor.rect.width}px`,
+    height: `${anchor.rect.height}px`,
   });
+  document.body.appendChild(ghost);
+  return () => ghost.remove();
 }
 
 function liveCardRect(target: CardRef): DOMRect | undefined {
@@ -980,6 +1054,38 @@ function liveDiscardElement(): HTMLElement | undefined {
 
 function liveDiscardRect(): DOMRect | undefined {
   return liveDiscardElement()?.getBoundingClientRect();
+}
+
+function holdActionVisuals(action: ActionView, activePlayerID?: string): () => void {
+  const elements: Array<HTMLElement | undefined> = [];
+  switch (action.kind) {
+    case "replace":
+      if (action.target) elements.push(liveCardElement(action.target));
+      elements.push(liveDiscardElement());
+      break;
+    case "discard":
+    case "slap":
+      elements.push(liveDiscardElement());
+      break;
+    case "swap":
+      if (action.first) elements.push(liveCardElement(action.first));
+      if (action.second) elements.push(liveCardElement(action.second));
+      break;
+    case "gift":
+      if (action.second) elements.push(liveCardElement(action.second));
+      break;
+    case "wrong_slap":
+      break;
+  }
+  const releaseElements = hideElements(elements);
+  const activeArea = activePlayerID
+    ? [...document.querySelectorAll<HTMLElement>(".player-area")].find((area) => area.dataset.playerId === activePlayerID)
+    : undefined;
+  activeArea?.classList.add("action-active-held");
+  return () => {
+    releaseElements();
+    activeArea?.classList.remove("action-active-held");
+  };
 }
 
 function hideElements(elements: Array<HTMLElement | undefined>): () => void {
