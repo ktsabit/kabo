@@ -726,17 +726,15 @@ function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInit
 
 function TurnPrompt({ snapshot, isMyTurn }: { snapshot: SnapshotMessage; isMyTurn: boolean }) {
   const canGift = snapshot.phase === "await_gift" && snapshot.pendingGift?.slapperId === snapshot.you.id;
-  const waitingForInitialReady = snapshot.phase === "initial_peek" && snapshot.reveal?.kind === "initial" && snapshot.players.some((player) => player.id === snapshot.you.id && player.initialReady === false);
-  if (!isMyTurn && !canGift && !waitingForInitialReady) return null;
+  if (!isMyTurn && !canGift) return null;
   let prompt = "";
-  if (waitingForInitialReady) prompt = "Ready";
   if (isMyTurn && snapshot.phase === "await_draw") prompt = "Draw";
   if (isMyTurn && snapshot.phase === "await_choice") prompt = "Choose";
   if (isMyTurn && (snapshot.phase === "await_self_peek" || snapshot.phase === "await_opponent_peek" || snapshot.phase === "await_king_peek")) prompt = "Peek";
   if (isMyTurn && snapshot.phase === "await_swap") prompt = "Swap";
   if (canGift) prompt = "Give";
   if (!prompt) return null;
-  return <div className="turn-prompt"><span className={isMyTurn || canGift || waitingForInitialReady ? "pulse" : ""} /><b>{prompt}</b><TurnCountdown deadlineAt={snapshot.deadlineAt} /></div>;
+  return <div className="turn-prompt"><span className={isMyTurn || canGift ? "pulse" : ""} /><b>{prompt}</b><TurnCountdown deadlineAt={snapshot.deadlineAt} /></div>;
 }
 
 function TurnCountdown({ deadlineAt }: { deadlineAt?: number }) {
