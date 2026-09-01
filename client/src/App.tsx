@@ -730,7 +730,7 @@ function PeekableCard({ card, compact = false }: { card?: Card; compact?: boolea
       });
     } else if (face) {
       setRevealed(false);
-      hideTimer = window.setTimeout(() => setFace(undefined), 460);
+      hideTimer = window.setTimeout(() => setFace(undefined), 300);
     }
     return () => {
       if (firstFrame !== undefined) window.cancelAnimationFrame(firstFrame);
@@ -849,12 +849,16 @@ async function animateSwap(firstRef: CardRef, secondRef: CardRef, first: ActionA
   const restore = hideCardButtons([firstRef, secondRef]);
   try {
     await Promise.all([
-      flyCard(first.element, first.rect, secondDestination, -28, 0, 820),
-      flyCard(second.element, second.rect, firstDestination, 28, 0, 820),
+      flyCard(cardBackElement(), first.rect, secondDestination, -28, 0, 820, undefined, false, 0),
+      flyCard(cardBackElement(), second.rect, firstDestination, 28, 0, 820, undefined, false, 0),
     ]);
   } finally {
     restore();
   }
+}
+
+function cardBackElement(): HTMLElement {
+  return Object.assign(document.createElement("div"), { className: "card-back compact" });
 }
 
 async function animateReplace(action: ActionView, targetRef: CardRef, target: ActionAnchor, discard: ActionAnchor, drawn: ActionAnchor): Promise<void> {
@@ -1010,7 +1014,7 @@ async function animateGift(targetRef: CardRef, source: ActionAnchor): Promise<vo
   await flyCard(source.element, source.rect, destination, 28, 0, 720);
 }
 
-function flyCard(card: HTMLElement, from: DOMRect, to: DOMRect, arc: number, delay: number, duration: number, face?: Card, flipToBack = false): Promise<void> {
+function flyCard(card: HTMLElement, from: DOMRect, to: DOMRect, arc: number, delay: number, duration: number, face?: Card, flipToBack = false, tilt = 7): Promise<void> {
   const ghost = document.createElement("div");
   ghost.className = "action-card-ghost";
   let root: ReturnType<typeof createRoot> | undefined;
@@ -1059,7 +1063,7 @@ function flyCard(card: HTMLElement, from: DOMRect, to: DOMRect, arc: number, del
   const midHeight = from.height + (to.height - from.height) * .52;
   const animation = ghost.animate([
     { width: `${from.width}px`, height: `${from.height}px`, transform: "translate3d(0,0,0) rotate(0deg)", opacity: 1 },
-    { width: `${midWidth}px`, height: `${midHeight}px`, transform: `translate3d(${dx * .5}px, ${dy * .5 + arc}px, 0) rotate(${arc > 0 ? 7 : -7}deg)`, opacity: 1, offset: .52 },
+    { width: `${midWidth}px`, height: `${midHeight}px`, transform: `translate3d(${dx * .5}px, ${dy * .5 + arc}px, 0) rotate(${arc > 0 ? tilt : -tilt}deg)`, opacity: 1, offset: .52 },
     { width: `${to.width}px`, height: `${to.height}px`, transform: `translate3d(${dx}px, ${dy}px, 0) rotate(0deg)`, opacity: 1 },
   ], { duration, delay, easing: "cubic-bezier(.2,.78,.2,1)", fill: "both" });
   if (flipToBack && flipper) {
