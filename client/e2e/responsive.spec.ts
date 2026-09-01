@@ -4,6 +4,7 @@ const matrix = [
   { name: "phone portrait", width: 320, height: 568 },
   { name: "phone landscape", width: 844, height: 390 },
   { name: "tablet split", width: 768, height: 500 },
+  { name: "Discord activity panel", width: 812, height: 660, noPileOverlap: true },
   { name: "Discord sidebars", width: 960, height: 540 },
   { name: "laptop", width: 1280, height: 720 },
   { name: "desktop", width: 1920, height: 1080 },
@@ -91,6 +92,20 @@ async function expectNoViewportCropping(page: Page) {
   expect(report.zeroCards, "cards collapsed to unusable dimensions").toBe(0);
 }
 
+async function expectPileClearOfHands(page: Page) {
+  const overlaps = await page.evaluate(() => {
+    const pile = document.querySelector<HTMLElement>(".pile-zone")?.getBoundingClientRect();
+    if (!pile) return [];
+    return [...document.querySelectorAll<HTMLElement>(".player-area")]
+      .filter((area) => {
+        const hand = area.getBoundingClientRect();
+        return hand.left < pile.right && hand.right > pile.left && hand.top < pile.bottom && hand.bottom > pile.top;
+      })
+      .map((area) => area.dataset.playerId ?? "unknown player");
+  });
+  expect(overlaps, "draw and discard piles overlap a player's hand").toEqual([]);
+}
+
 test("lobby ready control remains reachable across the viewport matrix", async ({ page }) => {
   await page.goto(`/?room=lobby-${Date.now()}&user=matrix-lobby&name=Matrix`);
   await expect(page.locator(".lobby-card")).toBeVisible();
@@ -117,6 +132,7 @@ test("eight-player table keeps all critical controls reachable", async ({ page }
         await expectReachable(page, ".pile-zone");
         await expectReachable(page, ".my-area");
         await expectNoViewportCropping(page);
+        if ("noPileOverlap" in viewport) await expectPileClearOfHands(page);
       });
     }
   } finally {
