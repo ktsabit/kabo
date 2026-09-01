@@ -60,6 +60,7 @@ function App() {
       .catch((error: unknown) => console.error("Kabo action animation failed", error))
       .finally(() => {
         animationRunning.current = false;
+        if (actionQueue.current.length === 0) document.documentElement.classList.remove("action-in-flight");
         if (actionQueue.current.length > 0) scheduleActionPump();
       });
   };
@@ -78,6 +79,7 @@ function App() {
     }
     if (action.id <= lastActionID.current) return;
     lastActionID.current = action.id;
+    document.documentElement.classList.add("action-in-flight");
     actionQueue.current.push({ action, geometry: captureActionGeometry(action) });
     // Keep the UI responsive if a reconnect or a burst of slaps delivers a lot
     // of authoritative actions at once. The latest state is already rendered;
@@ -260,6 +262,10 @@ function App() {
       <section className={`game-surface ${snapshot.phase !== "lobby" ? "table-layout" : ""} ${snapshot.phase === "ended" ? "round-ended" : ""}`}>
         {snapshot.phase === "lobby" ? (
           <Lobby snapshot={snapshot} platform={platform} send={send} />
+        ) : snapshot.phase === "ended" ? (
+          <div className="ended-screen">
+            <RoundSummary snapshot={snapshot} winners={winnerNames} losers={loserNames} send={send} canStart={!isSpectator} />
+          </div>
         ) : (
           <>
             <div className={`opponents opponents-u opponents-${opponents.length}`} aria-label="Opponents">
@@ -280,13 +286,13 @@ function App() {
             </div>
 
             <div className="table-center slap-dropzone" onDragOver={(event) => event.preventDefault()} onDrop={dropToSlap}>
-              <div className={`pile-zone ${snapshot.phase === "ended" ? "settled" : ""}`}>
-                <button className="deck" disabled={snapshot.phase === "ended" || !isMyTurn || snapshot.phase !== "await_draw"} onClick={() => send({ type: "draw" })}>
+              <div className="pile-zone">
+                <button className="deck" disabled={!isMyTurn || snapshot.phase !== "await_draw"} onClick={() => send({ type: "draw" })}>
                   <span>{snapshot.drawPileCount}</span>
-                  <small>{snapshot.phase === "ended" ? "LEFT" : "DRAW"}</small>
+                  <small>DRAW</small>
                 </button>
                 <div className={`drawn-card-position ${snapshot.hasDrawnCard ? "occupied" : ""}`}>
-                  {snapshot.phase !== "ended" && snapshot.hasDrawnCard && (
+                  {snapshot.hasDrawnCard && (
                     <div className="drawn-card-zone">
                       {snapshot.drawnCard ? <PlayingCard card={snapshot.drawnCard} compact /> : <CardBack compact />}
                     </div>
@@ -309,11 +315,7 @@ function App() {
                   <small>DISCARD</small>
                 </div>
               </div>
-              {snapshot.phase === "ended"
-                ? <RoundSummary snapshot={snapshot} winners={winnerNames} losers={loserNames} send={send} canStart={!isSpectator} />
-                : <>
-                  <TurnPrompt snapshot={snapshot} isMyTurn={isMyTurn} />
-                </>}
+              <TurnPrompt snapshot={snapshot} isMyTurn={isMyTurn} />
             </div>
 
             {me && (
@@ -516,10 +518,11 @@ function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInit
           </span>
         )}
       </div>
-      <div className="card-grid">
+      <div className={`card-grid card-count-${player.cards.length}`}>
         {player.cards.map((slot) => {
           const target = { playerId: player.id, slot: slot.slot };
-          const isSelected = selected.some((item) => sameRef(item, target));
+          const selectionOrder = selected.findIndex((item) => sameRef(item, target)) + 1;
+          const isSelected = selectionOrder > 0;
           const revealed = revealAt(snapshot, target);
           const opponentPeekReveal = !mine && Boolean(revealed && snapshot.reveal?.kind !== "initial");
           const power = canInteract ? powerHint(snapshot, target, slot.occupied) : undefined;
@@ -543,6 +546,7 @@ function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInit
               >
                 {slot.occupied ? (slot.card || revealed ? <PlayingCard card={slot.card ?? revealed!} compact flipped /> : <CardBack compact />) : <div className="empty-slot" />}
               </button>
+              {isSelected && <span className="selection-order" aria-hidden="true">{selectionOrder}</span>}
               {canInteract && slot.occupied && snapshot.discardTop && snapshot.phase !== "initial_peek" && snapshot.phase !== "ended" && (
                 <button className="slap-button" onClick={() => onSlap(target)} aria-label={`Slap ${player.name}'s card ${slot.slot + 1}`}>↯</button>
               )}
@@ -639,7 +643,7 @@ function uSeatStyle(index: number, total: number): CSSProperties {
   const x = total <= 1 ? 50 : 50 - spread / 2 + (spread * index) / (total - 1);
   const edge = Math.abs(x - 50) / Math.max(spread / 2, 1);
   const y = 6 + 39 * edge ** 1.55;
-  const scale = total <= 2 ? 1 : total <= 4 ? .8 : total <= 6 ? .66 : .56;
+  const scale = total <= 4 ? 1 : total <= 6 ? .82 : .7;
   return { "--u-x": `${x}%`, "--u-y": `${y}%`, "--u-scale": scale } as CSSProperties;
 }
 
@@ -670,10 +674,14 @@ async function animateAction(action: ActionView, geometry: ActionGeometry): Prom
     case "wrong_slap":
       return animateWrongSlap(action, geometry);
     case "swap":
-      if (geometry.first && geometry.second) return animateSwap(geometry.first, geometry.second);
+      if (geometry.first && geometry.second && action.first && action.second) {
+        return animateSwap(action.first, action.second, geometry.first, geometry.second);
+      }
       return;
     case "replace":
-      if (geometry.target && geometry.discard && geometry.drawn) return animateReplace(action, geometry.target, geometry.discard, geometry.drawn);
+      if (geometry.target && geometry.discard && geometry.drawn && action.target) {
+        return animateReplace(action, action.target, geometry.target, geometry.discard, geometry.drawn);
+      }
       return;
     case "discard":
       if (geometry.discard && geometry.drawn) return animateDiscard(action, geometry.discard, geometry.drawn);
@@ -682,7 +690,9 @@ async function animateAction(action: ActionView, geometry: ActionGeometry): Prom
       if (geometry.target && geometry.discard) return animateSlap(action, geometry.target, geometry.discard);
       return;
     case "gift":
-      if (geometry.first && geometry.second) return animateGift(geometry.first, geometry.second);
+      if (geometry.first && geometry.second && action.first && action.second) {
+        return animateGift(action.second, geometry.first);
+      }
       return;
   }
 }
@@ -691,26 +701,45 @@ function slotFor(target: CardRef): HTMLElement | undefined {
   return [...document.querySelectorAll<HTMLElement>("[data-card-ref]")].find((slot) => slot.dataset.cardRef === refKey(target));
 }
 
-function animateSwap(first: ActionAnchor, second: ActionAnchor): Promise<void> {
-  return Promise.all([
-    flyCard(first.element, first.rect, second.rect, -28, 0, 820),
-    flyCard(second.element, second.rect, first.rect, 28, 0, 820),
-  ]).then(() => undefined);
+async function animateSwap(firstRef: CardRef, secondRef: CardRef, first: ActionAnchor, second: ActionAnchor): Promise<void> {
+  await waitForLayout();
+  const firstDestination = liveCardRect(firstRef);
+  const secondDestination = liveCardRect(secondRef);
+  if (!firstDestination || !secondDestination) return;
+  const restore = hideCardButtons([firstRef, secondRef]);
+  try {
+    await Promise.all([
+      flyCard(first.element, first.rect, secondDestination, -28, 0, 820),
+      flyCard(second.element, second.rect, firstDestination, 28, 0, 820),
+    ]);
+  } finally {
+    restore();
+  }
 }
 
-function animateReplace(action: ActionView, target: ActionAnchor, discard: ActionAnchor, drawn: ActionAnchor): Promise<void> {
-  return Promise.all([
-    flyCard(target.element, target.rect, discard.rect, -30, 0, 680, action.card),
-    flyCard(drawn.element, drawn.rect, target.rect, 34, 95, 760),
-  ]).then(() => undefined);
+async function animateReplace(action: ActionView, targetRef: CardRef, target: ActionAnchor, discard: ActionAnchor, drawn: ActionAnchor): Promise<void> {
+  await waitForLayout();
+  const targetDestination = liveCardRect(targetRef);
+  const discardDestination = liveDiscardRect();
+  if (!targetDestination || !discardDestination) return;
+  await Promise.all([
+    flyCard(target.element, target.rect, discardDestination, -30, 0, 680, action.card),
+    flyCard(drawn.element, drawn.rect, targetDestination, 34, 95, 760, undefined, true),
+  ]);
 }
 
-function animateDiscard(action: ActionView, discard: ActionAnchor, drawn: ActionAnchor): Promise<void> {
-  return flyCard(drawn.element, drawn.rect, discard.rect, -22, 0, 620, action.card);
+async function animateDiscard(action: ActionView, _discard: ActionAnchor, drawn: ActionAnchor): Promise<void> {
+  await waitForLayout();
+  const discardDestination = liveDiscardRect();
+  if (!discardDestination) return;
+  await flyCard(drawn.element, drawn.rect, discardDestination, -22, 0, 620, action.card);
 }
 
-function animateSlap(action: ActionView, target: ActionAnchor, discard: ActionAnchor): Promise<void> {
-  return flyCard(target.element, target.rect, discard.rect, -38, 0, 680, action.card);
+async function animateSlap(action: ActionView, target: ActionAnchor, _discard: ActionAnchor): Promise<void> {
+  await waitForLayout();
+  const discardDestination = liveDiscardRect();
+  if (!discardDestination) return;
+  await flyCard(target.element, target.rect, discardDestination, -38, 0, 680, action.card);
 }
 
 function animateWrongSlap(action: ActionView, geometry: ActionGeometry): Promise<void> {
@@ -785,27 +814,54 @@ function animateWrongSlap(action: ActionView, geometry: ActionGeometry): Promise
 function animateWrongSlapShake(playerID: string) {
   const area = [...document.querySelectorAll<HTMLElement>(".player-area")].find((item) => item.dataset.playerId === playerID);
   if (!area) return;
+  const areaRect = area.getBoundingClientRect();
+  const flash = document.createElement("div");
+  flash.className = "slap-flash";
+  flash.style.setProperty("--flash-x", `${areaRect.left + areaRect.width / 2}px`);
+  flash.style.setProperty("--flash-y", `${areaRect.top + areaRect.height / 2}px`);
+  document.body.appendChild(flash);
+  const flashAnimation = flash.animate([{ opacity: 0 }, { opacity: 1, offset: .28 }, { opacity: 0 }], { duration: 520, easing: "ease-out" });
+  flashAnimation.addEventListener("finish", () => flash.remove(), { once: true });
   const baseTransform = getComputedStyle(area).transform;
   const withOffset = (x: number, rotation = 0) => `${baseTransform === "none" ? "" : `${baseTransform} `}translateX(${x}px) rotate(${rotation}deg)`;
   area.animate([
     { transform: withOffset(0), filter: "drop-shadow(0 0 0 rgba(255,75,75,0))" },
-    { transform: withOffset(-9, -1), filter: "drop-shadow(0 0 24px rgba(255,75,75,.95))", background: "rgba(255,75,75,.18)" },
-    { transform: withOffset(8, 1), filter: "drop-shadow(0 0 30px rgba(255,75,75,.9))", background: "rgba(255,75,75,.22)" },
-    { transform: withOffset(-6), filter: "drop-shadow(0 0 18px rgba(255,75,75,.65))" },
+    { transform: withOffset(-9, -1), filter: "drop-shadow(0 0 30px rgba(255,75,75,.95))" },
+    { transform: withOffset(8, 1), filter: "drop-shadow(0 0 38px rgba(255,75,75,.9))" },
+    { transform: withOffset(-6), filter: "drop-shadow(0 0 24px rgba(255,75,75,.65))" },
     { transform: withOffset(4) },
-    { transform: withOffset(0), filter: "drop-shadow(0 0 0 rgba(255,75,75,0))", background: "transparent" },
+    { transform: withOffset(0), filter: "drop-shadow(0 0 0 rgba(255,75,75,0))" },
   ], { duration: 620, easing: "ease-out" });
 }
 
-function animateGift(source: ActionAnchor, target: ActionAnchor): Promise<void> {
-  return flyCard(source.element, source.rect, target.rect, 28, 0, 720);
+async function animateGift(targetRef: CardRef, source: ActionAnchor): Promise<void> {
+  await waitForLayout();
+  const destination = liveCardRect(targetRef);
+  if (!destination) return;
+  await flyCard(source.element, source.rect, destination, 28, 0, 720);
 }
 
-function flyCard(card: HTMLElement, from: DOMRect, to: DOMRect, arc: number, delay: number, duration: number, face?: Card): Promise<void> {
+function flyCard(card: HTMLElement, from: DOMRect, to: DOMRect, arc: number, delay: number, duration: number, face?: Card, flipToBack = false): Promise<void> {
   const ghost = document.createElement("div");
   ghost.className = "action-card-ghost";
   let root: ReturnType<typeof createRoot> | undefined;
-  if (face) {
+  let front: HTMLElement | undefined;
+  if (flipToBack) {
+    front = document.createElement("div");
+    front.className = "action-card-layer action-card-front";
+    const back = document.createElement("div");
+    back.className = "action-card-layer action-card-back";
+    if (face) {
+      root = createRoot(front);
+      root.render(<PlayingCard card={face} compact />);
+    } else {
+      const clone = card.cloneNode(true) as HTMLElement;
+      clone.classList.remove("flip-in");
+      front.appendChild(clone);
+    }
+    back.appendChild(Object.assign(document.createElement("div"), { className: "card-back compact" }));
+    ghost.append(front, back);
+  } else if (face) {
     root = createRoot(ghost);
     root.render(<PlayingCard card={face} compact />);
   } else {
@@ -834,6 +890,19 @@ function flyCard(card: HTMLElement, from: DOMRect, to: DOMRect, arc: number, del
     { width: `${midWidth}px`, height: `${midHeight}px`, transform: `translate3d(${dx * .5}px, ${dy * .5 + arc}px, 0) rotate(${arc > 0 ? 7 : -7}deg)`, opacity: 1, offset: .52 },
     { width: `${to.width}px`, height: `${to.height}px`, transform: `translate3d(${dx}px, ${dy}px, 0) rotate(0deg)`, opacity: 1 },
   ], { duration, delay, easing: "cubic-bezier(.2,.78,.2,1)", fill: "both" });
+  if (flipToBack && front) {
+    const flipDelay = delay + duration * .56;
+    const flipDuration = Math.min(260, duration * .3);
+    front.animate([
+      { transform: "rotateY(0deg)", opacity: 1 },
+      { transform: "rotateY(90deg)", opacity: 0 },
+    ], { duration: flipDuration, delay: flipDelay, easing: "ease-in", fill: "both" });
+    const back = ghost.querySelector<HTMLElement>(".action-card-back");
+    back?.animate([
+      { transform: "rotateY(-90deg)", opacity: 0 },
+      { transform: "rotateY(0deg)", opacity: 1 },
+    ], { duration: flipDuration, delay: flipDelay, easing: "ease-out", fill: "both" });
+  }
   return new Promise<void>((resolve) => {
     let settled = false;
     let fallback: number | undefined;
@@ -849,6 +918,31 @@ function flyCard(card: HTMLElement, from: DOMRect, to: DOMRect, arc: number, del
     animation.addEventListener("cancel", finish, { once: true });
     fallback = window.setTimeout(finish, duration + delay + 180);
   });
+}
+
+function waitForLayout(): Promise<void> {
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()));
+  });
+}
+
+function liveCardRect(target: CardRef): DOMRect | undefined {
+  const slot = slotFor(target);
+  const element = slot?.querySelector<HTMLElement>(".playing-card, .card-back") ?? slot;
+  return element?.getBoundingClientRect();
+}
+
+function liveDiscardRect(): DOMRect | undefined {
+  const element = document.querySelector<HTMLElement>(".discard-wrap .playing-card, .discard-wrap .card-back, .discard-wrap .empty-discard");
+  return element?.getBoundingClientRect();
+}
+
+function hideCardButtons(targets: CardRef[]): () => void {
+  const buttons = targets
+    .map((target) => slotFor(target)?.querySelector<HTMLElement>(".card-button"))
+    .filter((button): button is HTMLElement => Boolean(button));
+  buttons.forEach((button) => button.classList.add("action-origin-hidden"));
+  return () => buttons.forEach((button) => button.classList.remove("action-origin-hidden"));
 }
 
 function hash(value: string) {
