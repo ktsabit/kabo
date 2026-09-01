@@ -621,8 +621,12 @@ function PlayerArea({ player, snapshot, selected, onCard, onSlap, onGift, onInit
           const peekReveal = Boolean(revealed && snapshot.reveal?.kind !== "initial");
           const power = canInteract ? powerHint(snapshot, target, slot.occupied) : undefined;
           const peekedByOther = snapshot.publicPeek?.viewerId !== snapshot.you.id && snapshot.publicPeek && sameRef(snapshot.publicPeek.target, target);
+          const vacatedDuringAction = !slot.occupied && (
+            (snapshot.action?.kind === "slap" && snapshot.action.target && sameRef(snapshot.action.target, target))
+            || (snapshot.action?.kind === "gift" && snapshot.action.first && sameRef(snapshot.action.first, target))
+          );
           return (
-            <div className={`slot-wrap ${!slot.occupied ? "empty-slot-anchor" : ""} ${penaltyPending && slot.slot === player.cards.length - 1 ? "penalty-card-pending" : ""} ${isSelected ? "selected" : ""} ${revealed ? "is-revealed" : ""} ${peekReveal ? "peek-reveal" : ""} ${peekedByOther ? "peek-observed" : ""} ${power ? `power-target power-${power}` : ""}`} key={slot.slot} data-card-ref={refKey(target)}>
+            <div className={`slot-wrap ${!slot.occupied ? "empty-slot-anchor" : ""} ${vacatedDuringAction ? "action-vacated" : ""} ${penaltyPending && slot.slot === player.cards.length - 1 ? "penalty-card-pending" : ""} ${isSelected ? "selected" : ""} ${revealed ? "is-revealed" : ""} ${peekReveal ? "peek-reveal" : ""} ${peekedByOther ? "peek-observed" : ""} ${power ? `power-target power-${power}` : ""}`} key={slot.slot} data-card-ref={refKey(target)}>
               <button
                 className="card-button"
                 disabled={!slot.occupied || !canInteract}

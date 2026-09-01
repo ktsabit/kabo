@@ -107,7 +107,7 @@ button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 .card-grid { position: relative; display: grid; grid-auto-flow: column; grid-template-rows: repeat(2, auto); grid-auto-columns: var(--table-card-width); gap: clamp(8px, .8vw, 12px); justify-content: center; width: max-content; max-width: none; overflow: visible; transform-origin: center; transition: transform .3s ease, filter .3s ease; }
 .slot-wrap { position: relative; border-radius: 10px; transition: transform .15s, box-shadow .15s; }
 .slot-wrap.empty-slot-anchor { position: absolute; left: 50%; top: 0; width: var(--table-card-width); height: calc(var(--table-card-width) * 1.4); visibility: hidden; pointer-events: none; transform: translateX(-50%); }
-.action-in-flight .card-grid .slot-wrap.empty-slot-anchor { position: relative; left: auto; top: auto; width: var(--table-card-width); height: calc(var(--table-card-width) * 1.4); visibility: hidden; transform: none !important; }
+.action-in-flight .card-grid .slot-wrap.empty-slot-anchor.action-vacated { position: relative; left: auto; top: auto; width: var(--table-card-width); height: calc(var(--table-card-width) * 1.4); visibility: hidden; transform: none !important; }
 .action-in-flight .card-grid .penalty-card-pending:not(.penalty-arriving) { display: none; }
 .action-in-flight .card-grid .penalty-card-pending.penalty-arriving { animation: penalty-card-arrive .44s cubic-bezier(.18,.8,.25,1) both; }
 @keyframes penalty-card-arrive {
