@@ -176,17 +176,34 @@ func (s *Store) RecordRound(result game.RoundResult) error {
 }
 
 func (s *Store) Leaderboard(guildID string, limit int) ([]LeaderboardEntry, error) {
+	entries, _, err := s.LeaderboardPage(guildID, 0, limit)
+	return entries, err
+}
+
+func (s *Store) LeaderboardPage(guildID string, offset, limit int) ([]LeaderboardEntry, int, error) {
 	if s == nil || s.db == nil {
-		return nil, errors.New("database is not open")
+		return nil, 0, errors.New("database is not open")
 	}
 	if guildID == "" {
-		return nil, errors.New("guild ID is empty")
+		return nil, 0, errors.New("guild ID is empty")
+	}
+	if offset < 0 {
+		offset = 0
 	}
 	if limit <= 0 {
 		limit = 10
 	}
 	if limit > 25 {
 		limit = 25
+	}
+	var total int
+	if err := s.db.QueryRow(`
+		SELECT COUNT(DISTINCT rp.player_id)
+		FROM round_players rp
+		JOIN rounds r ON r.id = rp.round_id
+		WHERE r.platform = 'discord' AND r.guild_id = ?
+	`, guildID).Scan(&total); err != nil {
+		return nil, 0, err
 	}
 
 	rows, err := s.db.Query(`
@@ -219,10 +236,10 @@ func (s *Store) Leaderboard(guildID string, limit int) ([]LeaderboardEntry, erro
 			(stats.total_score * 1.0 / stats.games) ASC,
 			stats.games DESC,
 			COALESCE(display_name, stats.player_id) COLLATE NOCASE ASC
-		LIMIT ?
-	`, guildID, guildID, limit)
+		LIMIT ? OFFSET ?
+	`, guildID, guildID, limit, offset)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -230,7 +247,7 @@ func (s *Store) Leaderboard(guildID string, limit int) ([]LeaderboardEntry, erro
 	for rows.Next() {
 		var entry LeaderboardEntry
 		if err := rows.Scan(&entry.PlayerID, &entry.DisplayName, &entry.Games, &entry.Wins, &entry.TotalScore); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if entry.DisplayName == "" {
 			entry.DisplayName = entry.PlayerID
@@ -240,9 +257,9 @@ func (s *Store) Leaderboard(guildID string, limit int) ([]LeaderboardEntry, erro
 		entries = append(entries, entry)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return entries, nil
+	return entries, total, nil
 }
 
 func refPlayer(ref *game.CardRef) any {

@@ -2,6 +2,7 @@ package persistence
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -168,6 +169,41 @@ func TestLeaderboardIsGuildScopedAndRanksByTotalWins(t *testing.T) {
 	}
 	if entries[1].PlayerID != "b" || entries[1].DisplayName != "Ben" || entries[1].Games != 3 || entries[1].Wins != 1 || entries[1].TotalScore != 4 {
 		t.Fatalf("second leaderboard entry = %+v, want Ben with 1 win despite his lower hand-score total", entries[1])
+	}
+}
+
+func TestLeaderboardPageReturnsAbsoluteSliceAndTotal(t *testing.T) {
+	store, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	players := make([]game.PlayerResult, 12)
+	for index := range players {
+		players[index] = game.PlayerResult{
+			ID:     fmt.Sprintf("player-%02d", index+1),
+			Name:   fmt.Sprintf("Player %02d", index+1),
+			Score:  index,
+			Winner: index == 0,
+		}
+	}
+	if err := store.RecordRound(game.RoundResult{
+		RoomID: "pagination", Platform: "discord", GuildID: "guild", Round: 1,
+		StartedAt: time.Unix(10, 0), EndedAt: time.Unix(20, 0), EndReason: "called_end", Players: players,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	page, total, err := store.LeaderboardPage("guild", 10, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 12 || len(page) != 2 {
+		t.Fatalf("page length = %d total = %d, want 2/12", len(page), total)
+	}
+	if page[0].DisplayName != "Player 11" || page[1].DisplayName != "Player 12" {
+		t.Fatalf("second page = %+v", page)
 	}
 }
 

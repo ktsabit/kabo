@@ -64,7 +64,7 @@ func TestDiscordInteractionHandlerAcknowledgesPingAndServesLeaderboard(t *testin
 		t.Fatalf("PING response = %d %q", pingResponse.Code, pingResponse.Body.String())
 	}
 
-	command := signedDiscordRequest(t, privateKey, `{"type":2,"application_id":"app","token":"token","guild_id":"guild","guild":{"name":"Kabo"},"data":{"name":"leaderboard"}}`)
+	command := signedDiscordRequest(t, privateKey, `{"type":2,"application_id":"app","token":"token","guild_id":"guild","member":{"nick":"Full Server Nickname","user":{"id":"player","username":"account"}},"data":{"name":"leaderboard"}}`)
 	commandResponse := httptest.NewRecorder()
 	s.handleDiscordInteraction(commandResponse, command)
 	if commandResponse.Code != 200 {
@@ -87,6 +87,95 @@ func TestDiscordInteractionHandlerAcknowledgesPingAndServesLeaderboard(t *testin
 	}
 	if !strings.Contains(string(uploadedBody), "attachment://leaderboard.png") || !strings.Contains(string(uploadedBody), "filename=\"leaderboard.png\"") || !bytes.Contains(uploadedBody, []byte("\x89PNG")) {
 		t.Fatal("leaderboard upload did not contain the expected embed attachment")
+	}
+	if strings.Contains(string(uploadedBody), "All-Time Standings") || strings.Contains(string(uploadedBody), "Ranked by total") || strings.Contains(string(uploadedBody), "win rounds, climb") {
+		t.Fatal("leaderboard upload still contains removed embed copy")
+	}
+	if !strings.Contains(string(uploadedBody), "kabo:leaderboard:player:delete") || !bytes.Contains(uploadedBody, []byte("❌")) {
+		t.Fatal("leaderboard upload omitted its owner-scoped delete button")
+	}
+}
+
+func TestLeaderboardComponentsProvideOwnerScopedPaginationAndDelete(t *testing.T) {
+	rows := renderLeaderboardComponents("viewer", 1, 3)
+	if len(rows) != 1 || len(rows[0].Components) != 4 {
+		t.Fatalf("components = %+v, want one row with four buttons", rows)
+	}
+	buttons := rows[0].Components
+	if buttons[0].Label != "Previous" || buttons[1].Label != "2 / 3" || buttons[2].Label != "Next" {
+		t.Fatalf("pagination buttons = %+v", buttons[:3])
+	}
+	if buttons[3].Style != discordButtonDanger || buttons[3].Emoji == nil || buttons[3].Emoji.Name != "❌" {
+		t.Fatalf("delete button = %+v", buttons[3])
+	}
+	owner, action, page, ok := parseLeaderboardComponentID(buttons[2].CustomID)
+	if !ok || owner != "viewer" || action != "page" || page != 2 {
+		t.Fatalf("parsed next button = owner %q action %q page %d ok %v", owner, action, page, ok)
+	}
+	owner, action, _, ok = parseLeaderboardComponentID(buttons[3].CustomID)
+	if !ok || owner != "viewer" || action != "delete" {
+		t.Fatalf("parsed delete button = owner %q action %q ok %v", owner, action, ok)
+	}
+}
+
+func TestLeaderboardImageEmbedContainsNoExtraCopy(t *testing.T) {
+	embed := renderLeaderboardEmbed([]persistence.LeaderboardEntry{{DisplayName: "Player"}}, "attachment://leaderboard.png")
+	if embed.Title != "" || embed.Description != "" || embed.Footer != nil || len(embed.Fields) != 0 {
+		t.Fatalf("image embed contains extra copy: %+v", embed)
+	}
+	if embed.Image == nil || embed.Image.URL != "attachment://leaderboard.png" {
+		t.Fatalf("image embed = %+v", embed.Image)
+	}
+}
+
+func TestDiscordLeaderboardDeleteButtonRemovesOriginalMessage(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleted := make(chan struct{})
+	s := &server{
+		interactionPublicKey: publicKey,
+		discord: auth.Discord{HTTPClient: &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+			if request.Method != http.MethodDelete {
+				t.Errorf("delete control used %s, want DELETE", request.Method)
+			}
+			close(deleted)
+			return &http.Response{StatusCode: http.StatusNoContent, Status: "204 No Content", Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}, nil
+		})}},
+	}
+	request := signedDiscordRequest(t, privateKey, `{"type":3,"application_id":"app","token":"token","guild_id":"guild","member":{"user":{"id":"viewer"}},"data":{"custom_id":"kabo:leaderboard:viewer:delete"}}`)
+	response := httptest.NewRecorder()
+	s.handleDiscordInteraction(response, request)
+	var interactionResponse discordInteractionResponse
+	if err := json.NewDecoder(response.Body).Decode(&interactionResponse); err != nil {
+		t.Fatal(err)
+	}
+	if interactionResponse.Type != discordResponseDeferredUpdate {
+		t.Fatalf("delete response type = %d, want %d", interactionResponse.Type, discordResponseDeferredUpdate)
+	}
+	select {
+	case <-deleted:
+	case <-time.After(time.Second):
+		t.Fatal("delete control did not remove the original message")
+	}
+}
+
+func TestDiscordLeaderboardControlsRejectOtherMembers(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &server{interactionPublicKey: publicKey}
+	request := signedDiscordRequest(t, privateKey, `{"type":3,"member":{"user":{"id":"other"}},"data":{"custom_id":"kabo:leaderboard:owner:page:1"}}`)
+	response := httptest.NewRecorder()
+	s.handleDiscordInteraction(response, request)
+	var interactionResponse discordInteractionResponse
+	if err := json.NewDecoder(response.Body).Decode(&interactionResponse); err != nil {
+		t.Fatal(err)
+	}
+	if interactionResponse.Type != discordResponseChannelMessage || interactionResponse.Data == nil || interactionResponse.Data.Flags != discordMessageFlagEphemeral {
+		t.Fatalf("unauthorized control response = %+v", interactionResponse)
 	}
 }
 

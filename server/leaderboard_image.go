@@ -20,10 +20,10 @@ import (
 )
 
 const (
-	leaderboardImageWidth  = 1200
-	leaderboardTableStart  = 478
-	leaderboardTableHeader = 42
-	leaderboardRowHeight   = 64
+	leaderboardImageWidth = 1000
+	leaderboardListStart  = 410
+	leaderboardPageStart  = 104
+	leaderboardRowHeight  = 74
 )
 
 var (
@@ -39,78 +39,77 @@ func loadLeaderboardTypeface(data []byte) *opentype.Font {
 	return typeface
 }
 
-func renderLeaderboardPNG(serverName string, entries []persistence.LeaderboardEntry, avatars map[string]image.Image) ([]byte, error) {
+func renderLeaderboardPNG(_ string, entries []persistence.LeaderboardEntry, avatars map[string]image.Image) ([]byte, error) {
+	return renderLeaderboardPagePNG(entries, avatars, 0, "", "")
+}
+
+func renderLeaderboardPagePNG(entries []persistence.LeaderboardEntry, avatars map[string]image.Image, rankOffset int, viewerID, viewerName string) ([]byte, error) {
 	if len(entries) > leaderboardSize {
 		entries = entries[:leaderboardSize]
 	}
-	height := leaderboardImageHeight(len(entries))
+	height := leaderboardPageImageHeight(len(entries), rankOffset)
 
 	canvas := image.NewRGBA(image.Rect(0, 0, leaderboardImageWidth, height))
-	drawLeaderboardBackground(canvas)
+	drawKaboLeaderboardBackground(canvas)
 
-	panel := image.Rect(28, 28, leaderboardImageWidth-28, height-28)
-	fillRoundedRect(canvas, panel, 32, rgba(13, 16, 43, 255))
-	fillRoundedRect(canvas, image.Rect(28, 28, 36, 202), 4, rgba(255, 211, 110, 255))
-
-	titleFace, err := leaderboardBoldFace(46)
+	titleFace, err := leaderboardBoldFace(36)
 	if err != nil {
 		return nil, err
 	}
-	metaFace, err := leaderboardFace(20)
+	rankFace, err := leaderboardBoldFace(20)
 	if err != nil {
 		return nil, err
 	}
-	smallBoldFace, err := leaderboardBoldFace(17)
+	nameFace, err := leaderboardBoldFace(25)
 	if err != nil {
 		return nil, err
 	}
-	nameFace, err := leaderboardBoldFace(27)
-	if err != nil {
-		return nil, err
-	}
-	scoreFace, err := leaderboardBoldFace(25)
+	valueFace, err := leaderboardFace(22)
 	if err != nil {
 		return nil, err
 	}
 
-	serverName = cleanLeaderboardText(serverName)
-	drawStandingsHeader(canvas, serverName, titleFace, metaFace, smallBoldFace)
+	drawCenteredTextAt(canvas, "Kabo Leaderboard", leaderboardImageWidth/2, 30, titleFace, rgba(246, 247, 251, 255))
 
 	if len(entries) == 0 {
-		drawStandingsEmpty(canvas, titleFace, metaFace, smallBoldFace)
-		drawLeaderboardFooter(canvas, height, metaFace)
+		drawCenteredTextAt(canvas, "No completed rounds yet", leaderboardImageWidth/2, 132, nameFace, rgba(155, 159, 178, 255))
 		return encodeLeaderboardPNG(canvas)
 	}
 
-	drawStandingsLeader(canvas, entries[0], nameFace, scoreFace, metaFace, smallBoldFace, avatars[entries[0].PlayerID])
-	if len(entries) > 1 {
-		drawStandingsRunner(canvas, entries[1], 2, 226, nameFace, scoreFace, metaFace, smallBoldFace, avatars[entries[1].PlayerID])
+	startIndex := 0
+	rowY := leaderboardPageStart
+	if rankOffset == 0 {
+		podiumCount := len(entries)
+		if podiumCount > 3 {
+			podiumCount = 3
+		}
+		drawLeaderboardPodium(canvas, entries[:podiumCount], avatars, viewerID, viewerName, nameFace, valueFace, rankFace)
+		startIndex = podiumCount
+		rowY = leaderboardListStart
 	}
-	if len(entries) > 2 {
-		drawStandingsRunner(canvas, entries[2], 3, 340, nameFace, scoreFace, metaFace, smallBoldFace, avatars[entries[2].PlayerID])
-	}
-	if len(entries) == 1 {
-		drawStandingsNote(canvas, 226, metaFace, smallBoldFace)
-	} else if len(entries) == 2 {
-		drawStandingsNote(canvas, 340, metaFace, smallBoldFace)
+	for index := startIndex; index < len(entries); index++ {
+		entry := entries[index]
+		drawLeaderboardRow(canvas, entry, rankOffset+index+1, rowY+(index-startIndex)*leaderboardRowHeight, viewerID, viewerName, nameFace, valueFace, rankFace, avatars[entry.PlayerID])
 	}
 
-	if len(entries) > 3 {
-		drawStandingsTable(canvas, entries[3:], nameFace, scoreFace, metaFace, smallBoldFace, avatars)
-	}
-
-	drawLeaderboardFooter(canvas, height, metaFace)
 	return encodeLeaderboardPNG(canvas)
 }
 
 func leaderboardImageHeight(entryCount int) int {
+	return leaderboardPageImageHeight(entryCount, 0)
+}
+
+func leaderboardPageImageHeight(entryCount, rankOffset int) int {
 	if entryCount <= 0 {
-		return 620
+		return 230
 	}
-	if entryCount <= 3 {
-		return 548
+	if rankOffset == 0 {
+		if entryCount <= 3 {
+			return 400
+		}
+		return leaderboardListStart + (entryCount-3)*leaderboardRowHeight + 22
 	}
-	return leaderboardTableStart + leaderboardTableHeader + (entryCount-3)*leaderboardRowHeight + 76
+	return leaderboardPageStart + entryCount*leaderboardRowHeight + 22
 }
 
 func leaderboardFace(size float64) (font.Face, error) {
@@ -129,150 +128,98 @@ func leaderboardBoldFace(size float64) (font.Face, error) {
 	})
 }
 
-func drawLeaderboardBackground(canvas *image.RGBA) {
-	start := rgba(8, 10, 29, 255)
-	end := rgba(12, 13, 34, 255)
+func drawKaboLeaderboardBackground(canvas *image.RGBA) {
+	start := rgba(13, 16, 51, 255)
+	middle := rgba(8, 10, 32, 255)
+	end := rgba(16, 12, 45, 255)
 	for y := canvas.Bounds().Min.Y; y < canvas.Bounds().Max.Y; y++ {
 		progress := float64(y) / float64(canvas.Bounds().Dy()-1)
+		from, to, localProgress := start, middle, progress/0.54
+		if progress > 0.54 {
+			from, to, localProgress = middle, end, (progress-0.54)/0.46
+		}
 		rowColor := color.RGBA{
-			R: uint8(float64(start.R) + float64(end.R-start.R)*progress),
-			G: uint8(float64(start.G) + float64(end.G-start.G)*progress),
-			B: uint8(float64(start.B) + float64(end.B-start.B)*progress),
+			R: uint8(float64(from.R) + (float64(to.R)-float64(from.R))*localProgress),
+			G: uint8(float64(from.G) + (float64(to.G)-float64(from.G))*localProgress),
+			B: uint8(float64(from.B) + (float64(to.B)-float64(from.B))*localProgress),
 			A: 255,
 		}
 		draw.Draw(canvas, image.Rect(0, y, canvas.Bounds().Dx(), y+1), image.NewUniform(rowColor), image.Point{}, draw.Src)
 	}
-
 }
 
-func drawStandingsHeader(canvas *image.RGBA, serverName string, titleFace, metaFace, labelFace font.Face) {
-	drawCompactKaboMark(canvas, 66, 63, labelFace)
-	drawText(canvas, "KABO  ·  "+strings.ToUpper(fitLeaderboardText(serverName, labelFace, 480)), 116, 61, labelFace, rgba(164, 169, 202, 255))
-	drawText(canvas, "All-time standings", 66, 97, titleFace, rgba(247, 248, 255, 255))
-	drawText(canvas, "Most round wins takes the lead.", 68, 157, metaFace, rgba(164, 169, 202, 255))
-	drawLeaderboardPill(canvas, "MOST WINS", 962, 72, 170, 42, labelFace, rgba(255, 211, 110, 255), rgba(29, 32, 70, 255))
-	fillRoundedRect(canvas, image.Rect(66, 200, 1134, 202), 1, rgba(40, 44, 82, 255))
-}
-
-func drawCompactKaboMark(canvas *image.RGBA, x, y int, face font.Face) {
-	fillRoundedRect(canvas, image.Rect(x+4, y-3, x+37, y+39), 7, rgba(66, 75, 198, 255))
-	fillRoundedRect(canvas, image.Rect(x, y+1, x+33, y+43), 7, rgba(246, 247, 255, 255))
-	fillRoundedRect(canvas, image.Rect(x+4, y+5, x+29, y+39), 5, rgba(38, 44, 122, 255))
-	drawCenteredTextAt(canvas, "K", x+16, y+10, face, rgba(255, 211, 110, 255))
-}
-
-func drawStandingsLeader(canvas *image.RGBA, entry persistence.LeaderboardEntry, nameFace, scoreFace, metaFace, labelFace font.Face, avatar image.Image) {
-	card := image.Rect(66, 226, 742, 454)
-	fillRoundedRect(canvas, card, 22, rgba(24, 28, 71, 255))
-	fillRoundedRect(canvas, image.Rect(card.Min.X, card.Min.Y, card.Min.X+5, card.Max.Y), 3, rgba(255, 211, 110, 255))
-	drawText(canvas, "01", 96, 252, scoreFace, rgba(255, 211, 110, 255))
-	drawText(canvas, "LEADER", 97, 291, labelFace, rgba(164, 169, 202, 255))
-
-	drawCircle(canvas, 192, 363, 61, rgba(255, 211, 110, 255))
-	drawLeaderboardAvatar(canvas, 192, 363, 55, entry.DisplayName, avatar, rgba(48, 57, 150, 255), rgba(247, 248, 255, 255), 34)
-
-	name := fitLeaderboardText(cleanLeaderboardText(entry.DisplayName), nameFace, 390)
-	drawText(canvas, name, 282, 268, nameFace, rgba(247, 248, 255, 255))
-	drawText(canvas, "ROUND WINS", 283, 311, labelFace, rgba(164, 169, 202, 255))
-	largeScoreFace, err := leaderboardBoldFace(62)
-	if err == nil {
-		wins := itoa(entry.Wins)
-		drawText(canvas, wins, 280, 337, largeScoreFace, rgba(255, 211, 110, 255))
-		drawText(canvas, "WINS", 295+font.MeasureString(largeScoreFace, wins).Ceil(), 374, scoreFace, rgba(255, 211, 110, 255))
+func drawLeaderboardPodium(canvas *image.RGBA, entries []persistence.LeaderboardEntry, avatars map[string]image.Image, viewerID, viewerName string, nameFace, valueFace, rankFace font.Face) {
+	positions := []int{500}
+	if len(entries) == 2 {
+		positions = []int{360, 650}
+	} else if len(entries) >= 3 {
+		positions = []int{500, 225, 775}
 	}
-	drawText(canvas, formatLeaderboardPercent(entry.WinRate)+" win rate   ·   "+metricLabel(entry.Games, "round", "rounds"), 283, 414, metaFace, rgba(188, 192, 218, 255))
-}
-
-func drawStandingsRunner(canvas *image.RGBA, entry persistence.LeaderboardEntry, rank, y int, nameFace, scoreFace, metaFace, labelFace font.Face, avatar image.Image) {
-	card := image.Rect(760, y, 1134, y+104)
-	fillRoundedRect(canvas, card, 18, rgba(21, 25, 62, 255))
-	drawText(canvas, "0"+itoa(rank), 784, y+22, scoreFace, rgba(170, 176, 218, 255))
-	drawLeaderboardAvatar(canvas, 850, y+52, 34, entry.DisplayName, avatar, rgba(48, 57, 150, 255), rgba(247, 248, 255, 255), 21)
-	runnerNameFace := nameFace
-	if compactFace, err := leaderboardBoldFace(23); err == nil {
-		runnerNameFace = compactFace
-	}
-	name := fitLeaderboardText(cleanLeaderboardText(entry.DisplayName), runnerNameFace, 166)
-	drawText(canvas, name, 901, y+18, runnerNameFace, rgba(247, 248, 255, 255))
-	drawText(canvas, metricLabel(entry.Games, "round", "rounds")+" · "+formatLeaderboardPercent(entry.WinRate), 902, y+60, labelFace, rgba(150, 156, 194, 255))
-	drawRightText(canvas, itoa(entry.Wins), 1110, y+21, scoreFace, rgba(255, 211, 110, 255))
-	drawRightText(canvas, "WINS", 1110, y+60, labelFace, rgba(150, 156, 194, 255))
-}
-
-func drawStandingsNote(canvas *image.RGBA, y int, metaFace, labelFace font.Face) {
-	card := image.Rect(760, y, 1134, y+104)
-	fillRoundedRect(canvas, card, 18, rgba(21, 25, 62, 255))
-	drawText(canvas, "SCORING", 786, y+22, labelFace, rgba(164, 169, 202, 255))
-	drawText(canvas, "Every round win moves you", 786, y+52, metaFace, rgba(230, 232, 246, 255))
-	drawText(canvas, "up the standings.", 786, y+77, metaFace, rgba(230, 232, 246, 255))
-}
-
-func drawStandingsTable(canvas *image.RGBA, entries []persistence.LeaderboardEntry, nameFace, scoreFace, metaFace, labelFace font.Face, avatars map[string]image.Image) {
-	tableBottom := leaderboardTableStart + leaderboardTableHeader + len(entries)*leaderboardRowHeight
-	fillRoundedRect(canvas, image.Rect(66, leaderboardTableStart, 1134, tableBottom), 18, rgba(18, 22, 55, 255))
-	drawText(canvas, "RANK", 88, leaderboardTableStart+12, labelFace, rgba(132, 138, 178, 255))
-	drawText(canvas, "PLAYER", 184, leaderboardTableStart+12, labelFace, rgba(132, 138, 178, 255))
-	drawRightText(canvas, "ROUNDS", 846, leaderboardTableStart+12, labelFace, rgba(132, 138, 178, 255))
-	drawRightText(canvas, "WIN RATE", 1000, leaderboardTableStart+12, labelFace, rgba(132, 138, 178, 255))
-	drawRightText(canvas, "WINS", 1110, leaderboardTableStart+12, labelFace, rgba(132, 138, 178, 255))
 
 	for index, entry := range entries {
-		y := leaderboardTableStart + leaderboardTableHeader + index*leaderboardRowHeight
-		if index%2 == 0 {
-			fillRoundedRect(canvas, image.Rect(68, y, 1132, y+leaderboardRowHeight), 0, rgba(21, 25, 62, 255))
+		rank := index + 1
+		centerY, radius := 205, 62
+		if rank == 1 {
+			centerY, radius = 178, 76
 		}
-		if index > 0 {
-			fillRoundedRect(canvas, image.Rect(88, y, 1112, y+1), 0, rgba(38, 42, 76, 255))
-		}
-		rank := index + 4
-		drawText(canvas, twoDigitRank(rank), 91, y+20, metaFace, rgba(164, 169, 202, 255))
-		drawLeaderboardAvatar(canvas, 157, y+leaderboardRowHeight/2, 22, entry.DisplayName, avatars[entry.PlayerID], rgba(48, 57, 150, 255), rgba(247, 248, 255, 255), 15)
-		name := fitLeaderboardText(cleanLeaderboardText(entry.DisplayName), nameFace, 430)
-		drawText(canvas, name, 190, y+15, nameFace, rgba(239, 241, 251, 255))
-		drawRightText(canvas, itoa(entry.Games), 846, y+20, metaFace, rgba(188, 192, 218, 255))
-		drawRightText(canvas, formatLeaderboardPercent(entry.WinRate), 1000, y+20, metaFace, rgba(188, 192, 218, 255))
-		drawRightText(canvas, itoa(entry.Wins), 1110, y+16, scoreFace, rgba(255, 211, 110, 255))
+		accent := leaderboardRankAccent(rank)
+		accentText := leaderboardRankAccentText(rank)
+		name := leaderboardDisplayName(entry, viewerID, viewerName)
+		x := positions[index]
+		drawLeaderboardAvatar(canvas, x, centerY, radius, name, avatars[entry.PlayerID], accent, accentText, 30)
+		rankY := centerY + radius - 6
+		drawCircle(canvas, x, rankY, 24, accent)
+		drawCenteredTextAt(canvas, itoa(rank), x, rankY-12, rankFace, accentText)
+		drawCenteredTextAt(canvas, fitLeaderboardText(name, nameFace, 240), x, centerY+radius+31, nameFace, rgba(246, 247, 251, 255))
+		drawCenteredTextAt(canvas, winsLabel(entry.Wins), x, centerY+radius+69, valueFace, rgba(169, 176, 255, 255))
 	}
 }
 
-func drawStandingsEmpty(canvas *image.RGBA, titleFace, metaFace, labelFace font.Face) {
-	card := image.Rect(66, 226, 1134, 526)
-	fillRoundedRect(canvas, card, 22, rgba(18, 22, 55, 255))
-	drawCompactKaboMark(canvas, 112, 292, labelFace)
-	drawText(canvas, "NO SCORES YET", 112, 354, labelFace, rgba(255, 211, 110, 255))
-	drawText(canvas, "Finish the first round", 316, 282, titleFace, rgba(247, 248, 255, 255))
-	drawText(canvas, "Completed Discord Activity rounds appear here automatically.", 318, 347, metaFace, rgba(164, 169, 202, 255))
-	drawText(canvas, "The first winner takes the lead; future wins move the table.", 318, 383, metaFace, rgba(164, 169, 202, 255))
-}
-
-func drawLeaderboardPill(canvas *image.RGBA, label string, x, y, width, height int, face font.Face, foreground, background color.RGBA) {
-	fillRoundedRect(canvas, image.Rect(x, y, x+width, y+height), height/2, background)
-	textWidth := font.MeasureString(face, label).Ceil()
-	drawText(canvas, label, x+(width-textWidth)/2, y+(height-face.Metrics().Height.Ceil())/2, face, foreground)
-}
-
-func drawLeaderboardFooter(canvas *image.RGBA, height int, face font.Face) {
-	drawText(canvas, "KABO", 58, height-52, face, rgba(245, 246, 255, 255))
-	drawRightText(canvas, "ALL-TIME  /  TOTAL ROUND WINS  /  HIGHER IS BETTER", leaderboardImageWidth-58, height-52, face, rgba(167, 172, 210, 255))
-}
-
-func formatLeaderboardPercent(value float64) string {
-	return strconv.FormatFloat(value, 'f', 0, 64) + "%"
-}
-
-func metricLabel(value int, singular, plural string) string {
-	label := plural
-	if value == 1 {
-		label = singular
+func drawLeaderboardRow(canvas *image.RGBA, entry persistence.LeaderboardEntry, rank, y int, viewerID, viewerName string, nameFace, valueFace, rankFace font.Face, avatar image.Image) {
+	highlighted := viewerID != "" && entry.PlayerID == viewerID
+	background := rgba(21, 25, 70, 255)
+	if highlighted {
+		background = rgba(48, 57, 185, 255)
 	}
-	return itoa(value) + " " + label
+	fillRoundedRect(canvas, image.Rect(28, y, 972, y+62), 16, background)
+
+	name := leaderboardDisplayName(entry, viewerID, viewerName)
+	drawText(canvas, itoa(rank), 56, y+18, rankFace, rgba(245, 246, 249, 255))
+	drawLeaderboardAvatar(canvas, 126, y+31, 25, name, avatar, leaderboardRankAccent(rank), leaderboardRankAccentText(rank), 16)
+	drawText(canvas, fitLeaderboardText(name, nameFace, 610), 170, y+15, nameFace, rgba(246, 247, 251, 255))
+	drawRightText(canvas, winsLabel(entry.Wins), 936, y+18, valueFace, rgba(169, 176, 255, 255))
 }
 
-func twoDigitRank(rank int) string {
-	if rank < 10 {
-		return "0" + itoa(rank)
+func leaderboardRankAccent(rank int) color.RGBA {
+	accents := []color.RGBA{
+		rgba(89, 100, 228, 255),
+		rgba(143, 218, 238, 255),
+		rgba(255, 159, 154, 255),
+		rgba(201, 184, 255, 255),
+		rgba(240, 169, 228, 255),
 	}
-	return itoa(rank)
+	return accents[(rank-1)%len(accents)]
+}
+
+func leaderboardRankAccentText(rank int) color.RGBA {
+	if (rank-1)%5 == 0 {
+		return rgba(245, 246, 255, 255)
+	}
+	return rgba(8, 10, 32, 255)
+}
+
+func leaderboardDisplayName(entry persistence.LeaderboardEntry, viewerID, viewerName string) string {
+	if viewerID != "" && entry.PlayerID == viewerID && strings.TrimSpace(viewerName) != "" {
+		return cleanLeaderboardText(viewerName)
+	}
+	return cleanLeaderboardText(entry.DisplayName)
+}
+
+func winsLabel(wins int) string {
+	if wins == 1 {
+		return "1 win"
+	}
+	return itoa(wins) + " wins"
 }
 
 func drawLeaderboardAvatar(canvas *image.RGBA, x, y, radius int, name string, avatar image.Image, background, foreground color.RGBA, fontSize float64) {

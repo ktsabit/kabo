@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,13 +23,20 @@ import (
 const (
 	discordInteractionPing           = 1
 	discordInteractionApplicationCmd = 2
+	discordInteractionComponent      = 3
 	discordResponsePong              = 1
 	discordResponseChannelMessage    = 4
 	discordResponseDeferred          = 5
+	discordResponseDeferredUpdate    = 6
 	discordMessageFlagEphemeral      = 1 << 6
+	discordComponentActionRow        = 1
+	discordComponentButton           = 2
+	discordButtonSecondary           = 2
+	discordButtonDanger              = 4
 	maxDiscordInteractionBody        = 1 << 20
 	leaderboardSize                  = 10
 	leaderboardImageFilename         = "leaderboard.png"
+	leaderboardComponentPrefix       = "kabo:leaderboard:"
 )
 
 type discordInteraction struct {
@@ -40,9 +48,20 @@ type discordInteraction struct {
 	Guild         struct {
 		Name string `json:"name"`
 	} `json:"guild"`
+	Member struct {
+		Nick string      `json:"nick"`
+		User discordUser `json:"user"`
+	} `json:"member"`
 	Data struct {
-		Name string `json:"name"`
+		Name     string `json:"name"`
+		CustomID string `json:"custom_id"`
 	} `json:"data"`
+}
+
+type discordUser struct {
+	ID         string `json:"id"`
+	Username   string `json:"username"`
+	GlobalName string `json:"global_name"`
 }
 
 type discordInteractionResponse struct {
@@ -55,6 +74,7 @@ type discordMessageResponse struct {
 	Embeds          []discordEmbed         `json:"embeds,omitempty"`
 	Flags           int                    `json:"flags,omitempty"`
 	AllowedMentions discordAllowedMentions `json:"allowed_mentions"`
+	Components      []discordComponent     `json:"components,omitempty"`
 }
 
 type discordAllowedMentions struct {
@@ -84,11 +104,26 @@ type discordEmbedFooter struct {
 	Text string `json:"text"`
 }
 
+type discordComponent struct {
+	Type       int                `json:"type"`
+	Style      int                `json:"style,omitempty"`
+	Label      string             `json:"label,omitempty"`
+	Emoji      *discordEmoji      `json:"emoji,omitempty"`
+	CustomID   string             `json:"custom_id,omitempty"`
+	Disabled   bool               `json:"disabled,omitempty"`
+	Components []discordComponent `json:"components,omitempty"`
+}
+
+type discordEmoji struct {
+	Name string `json:"name"`
+}
+
 type discordWebhookEdit struct {
 	Content         *string                `json:"content,omitempty"`
 	Embeds          []discordEmbed         `json:"embeds,omitempty"`
 	Attachments     []discordAttachment    `json:"attachments,omitempty"`
 	AllowedMentions discordAllowedMentions `json:"allowed_mentions"`
+	Components      []discordComponent     `json:"components,omitempty"`
 }
 
 type discordAttachment struct {
@@ -151,6 +186,8 @@ func (s *server) handleDiscordInteraction(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusOK, map[string]int{"type": discordResponsePong})
 	case discordInteractionApplicationCmd:
 		s.handleDiscordCommand(w, interaction)
+	case discordInteractionComponent:
+		s.handleDiscordComponent(w, interaction)
 	default:
 		http.Error(w, "unsupported interaction type", http.StatusBadRequest)
 	}
@@ -176,6 +213,30 @@ func (s *server) handleDiscordCommand(w http.ResponseWriter, interaction discord
 	go s.completeLeaderboard(interaction)
 }
 
+func (s *server) handleDiscordComponent(w http.ResponseWriter, interaction discordInteraction) {
+	ownerID, action, page, ok := parseLeaderboardComponentID(interaction.Data.CustomID)
+	if !ok {
+		writeJSON(w, http.StatusOK, discordEphemeralResponse("That control is no longer available."))
+		return
+	}
+	viewerID, _ := discordInteractionViewer(interaction)
+	if ownerID == "" || viewerID != ownerID {
+		writeJSON(w, http.StatusOK, discordEphemeralResponse("Only the member who opened this leaderboard can control it."))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, discordInteractionResponse{Type: discordResponseDeferredUpdate})
+	if action == "delete" {
+		go func() {
+			if err := s.deleteDiscordOriginal(interaction); err != nil {
+				log.Printf("delete Discord leaderboard for guild %s: %v", interaction.GuildID, err)
+			}
+		}()
+		return
+	}
+	go s.completeLeaderboardPage(interaction, page, ownerID)
+}
+
 func discordEphemeralResponse(content string) discordInteractionResponse {
 	return discordInteractionResponse{
 		Type: discordResponseChannelMessage,
@@ -192,7 +253,15 @@ func discordDeferredResponse() discordInteractionResponse {
 }
 
 func (s *server) completeLeaderboard(interaction discordInteraction) {
-	entries, err := s.results.Leaderboard(interaction.GuildID, leaderboardSize)
+	viewerID, _ := discordInteractionViewer(interaction)
+	s.completeLeaderboardPage(interaction, 0, viewerID)
+}
+
+func (s *server) completeLeaderboardPage(interaction discordInteraction, page int, ownerID string) {
+	if page < 0 {
+		page = 0
+	}
+	entries, total, err := s.results.LeaderboardPage(interaction.GuildID, page*leaderboardSize, leaderboardSize)
 	if err != nil {
 		log.Printf("read Discord leaderboard for guild %s: %v", interaction.GuildID, err)
 		if err := s.editDiscordOriginal(interaction, "The leaderboard is temporarily unavailable."); err != nil {
@@ -200,46 +269,50 @@ func (s *server) completeLeaderboard(interaction discordInteraction) {
 		}
 		return
 	}
-
-	serverName := interaction.Guild.Name
-	if serverName == "" {
-		serverName = "This server"
+	pageCount := leaderboardPageCount(total)
+	if page >= pageCount {
+		page = pageCount - 1
+		entries, total, err = s.results.LeaderboardPage(interaction.GuildID, page*leaderboardSize, leaderboardSize)
+		if err != nil {
+			log.Printf("read Discord leaderboard page for guild %s: %v", interaction.GuildID, err)
+			return
+		}
 	}
-	image, err := renderLeaderboardPNG(serverName, entries, s.fetchLeaderboardAvatars(entries))
+
+	viewerID, viewerName := discordInteractionViewer(interaction)
+	if ownerID == "" {
+		ownerID = viewerID
+	}
+	image, err := renderLeaderboardPagePNG(entries, s.fetchLeaderboardAvatars(entries), page*leaderboardSize, ownerID, viewerName)
 	if err != nil {
 		log.Printf("render Discord leaderboard for guild %s: %v", interaction.GuildID, err)
-		if err := s.editDiscordOriginal(interaction, renderLeaderboardFallback(entries)); err != nil {
+		if err := s.editDiscordOriginal(interaction, renderLeaderboardPageFallback(entries, page*leaderboardSize)); err != nil {
 			log.Printf("edit Discord leaderboard fallback: %v", err)
 		}
 		return
 	}
 
 	embed := renderLeaderboardEmbed(entries, "attachment://"+leaderboardImageFilename)
-	if err := s.editDiscordOriginalWithImage(interaction, embed, image); err != nil {
+	components := renderLeaderboardComponents(ownerID, page, leaderboardPageCount(total))
+	if err := s.editDiscordOriginalWithImage(interaction, embed, image, components); err != nil {
 		log.Printf("upload Discord leaderboard for guild %s: %v", interaction.GuildID, err)
-		if fallbackErr := s.editDiscordOriginal(interaction, renderLeaderboardFallback(entries)); fallbackErr != nil {
+		if fallbackErr := s.editDiscordOriginal(interaction, renderLeaderboardPageFallback(entries, page*leaderboardSize)); fallbackErr != nil {
 			log.Printf("edit Discord leaderboard after upload failure: %v", fallbackErr)
 		}
 	}
 }
 
 func renderLeaderboardEmbed(entries []persistence.LeaderboardEntry, imageURL string) discordEmbed {
-	embed := discordEmbed{
-		Title:       "Kabo · All-Time Standings",
-		Description: "Ranked by total round wins · higher is better",
-		Color:       0x3039B9,
-		Footer:      &discordEmbedFooter{Text: "Kabo · win rounds, climb the table"},
-	}
+	embed := discordEmbed{}
 	if imageURL != "" {
 		embed.Image = &discordEmbedImage{URL: imageURL}
+		return embed
 	}
 	if len(entries) == 0 {
-		embed.Description = "The table is open—finish a Discord Activity round in this server to place the first score."
+		embed.Description = "No completed rounds yet."
 		return embed
 	}
-	if imageURL != "" {
-		return embed
-	}
+	embed.Title = "Kabo Leaderboard"
 
 	embed.Fields = make([]discordEmbedField, 0, len(entries))
 	for index, entry := range entries {
@@ -261,13 +334,78 @@ func renderLeaderboardEmbed(entries []persistence.LeaderboardEntry, imageURL str
 	return embed
 }
 
+func discordInteractionViewer(interaction discordInteraction) (string, string) {
+	name := strings.TrimSpace(interaction.Member.Nick)
+	if name == "" {
+		name = strings.TrimSpace(interaction.Member.User.GlobalName)
+	}
+	if name == "" {
+		name = strings.TrimSpace(interaction.Member.User.Username)
+	}
+	return interaction.Member.User.ID, name
+}
+
+func leaderboardPageCount(total int) int {
+	if total <= 0 {
+		return 1
+	}
+	return (total + leaderboardSize - 1) / leaderboardSize
+}
+
+func renderLeaderboardComponents(ownerID string, page, pageCount int) []discordComponent {
+	buttons := make([]discordComponent, 0, 4)
+	if pageCount > 1 {
+		buttons = append(buttons,
+			discordComponent{Type: discordComponentButton, Style: discordButtonSecondary, Label: "Previous", CustomID: leaderboardPageComponentID(ownerID, page-1), Disabled: page == 0},
+			discordComponent{Type: discordComponentButton, Style: discordButtonSecondary, Label: fmt.Sprintf("%d / %d", page+1, pageCount), CustomID: leaderboardComponentPrefix + ownerID + ":status", Disabled: true},
+			discordComponent{Type: discordComponentButton, Style: discordButtonSecondary, Label: "Next", CustomID: leaderboardPageComponentID(ownerID, page+1), Disabled: page >= pageCount-1},
+		)
+	}
+	buttons = append(buttons, discordComponent{
+		Type:     discordComponentButton,
+		Style:    discordButtonDanger,
+		Emoji:    &discordEmoji{Name: "❌"},
+		CustomID: leaderboardComponentPrefix + ownerID + ":delete",
+	})
+	return []discordComponent{{Type: discordComponentActionRow, Components: buttons}}
+}
+
+func leaderboardPageComponentID(ownerID string, page int) string {
+	if page < 0 {
+		page = 0
+	}
+	return fmt.Sprintf("%s%s:page:%d", leaderboardComponentPrefix, ownerID, page)
+}
+
+func parseLeaderboardComponentID(customID string) (ownerID, action string, page int, ok bool) {
+	if !strings.HasPrefix(customID, leaderboardComponentPrefix) {
+		return "", "", 0, false
+	}
+	parts := strings.Split(strings.TrimPrefix(customID, leaderboardComponentPrefix), ":")
+	if len(parts) == 2 && parts[0] != "" && parts[1] == "delete" {
+		return parts[0], "delete", 0, true
+	}
+	if len(parts) != 3 || parts[0] == "" || parts[1] != "page" {
+		return "", "", 0, false
+	}
+	parsedPage, err := strconv.Atoi(parts[2])
+	if err != nil || parsedPage < 0 {
+		return "", "", 0, false
+	}
+	return parts[0], "page", parsedPage, true
+}
+
 func renderLeaderboardFallback(entries []persistence.LeaderboardEntry) string {
+	return renderLeaderboardPageFallback(entries, 0)
+}
+
+func renderLeaderboardPageFallback(entries []persistence.LeaderboardEntry, rankOffset int) string {
 	if len(entries) == 0 {
 		return "The table is open—finish a Discord Activity round in this server to place the first score."
 	}
 	var builder strings.Builder
 	for index, entry := range entries {
-		fmt.Fprintf(&builder, "%d. %s — %d wins · %.0f%% win rate · %d rounds\n", index+1, escapeDiscordText(entry.DisplayName), entry.Wins, entry.WinRate, entry.Games)
+		fmt.Fprintf(&builder, "%d. %s — %d wins · %.0f%% win rate · %d rounds\n", rankOffset+index+1, escapeDiscordText(entry.DisplayName), entry.Wins, entry.WinRate, entry.Games)
 	}
 	return strings.TrimSuffix(builder.String(), "\n")
 }
@@ -353,9 +491,10 @@ func (s *server) editDiscordOriginal(interaction discordInteraction, content str
 	return s.sendDiscordWebhookEdit(interaction, payload, nil)
 }
 
-func (s *server) editDiscordOriginalWithImage(interaction discordInteraction, embed discordEmbed, image []byte) error {
+func (s *server) editDiscordOriginalWithImage(interaction discordInteraction, embed discordEmbed, image []byte, components []discordComponent) error {
 	payload := discordWebhookEdit{
-		Embeds: []discordEmbed{embed},
+		Embeds:     []discordEmbed{embed},
+		Components: components,
 		Attachments: []discordAttachment{{
 			ID:       0,
 			Filename: leaderboardImageFilename,
@@ -387,6 +526,39 @@ func (s *server) editDiscordOriginalWithImage(interaction discordInteraction, em
 		return err
 	}
 	return s.sendDiscordWebhookEdit(interaction, payload, &multipartPayload{body: body.Bytes(), contentType: multipartWriter.FormDataContentType()})
+}
+
+func (s *server) deleteDiscordOriginal(interaction discordInteraction) error {
+	applicationID := interaction.ApplicationID
+	if applicationID == "" {
+		applicationID = s.discord.ClientID
+	}
+	if applicationID == "" || interaction.Token == "" {
+		return fmt.Errorf("interaction response credentials are incomplete")
+	}
+	endpoint := fmt.Sprintf(
+		"https://discord.com/api/v10/webhooks/%s/%s/messages/@original",
+		url.PathEscape(applicationID),
+		url.PathEscape(interaction.Token),
+	)
+	req, err := http.NewRequest(http.MethodDelete, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	client := s.discord.HTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("Discord returned %s: %s", resp.Status, strings.TrimSpace(string(responseBody)))
+	}
+	return nil
 }
 
 type multipartPayload struct {

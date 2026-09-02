@@ -51,3 +51,13 @@ func TestRenderLeaderboardPNGProducesDesignedEmptyState(t *testing.T) {
 		t.Fatalf("empty state bounds = %v", image.Bounds())
 	}
 }
+
+func TestLeaderboardDisplayNameUsesFullViewerNickname(t *testing.T) {
+	entry := persistence.LeaderboardEntry{PlayerID: "viewer", DisplayName: "Old game name"}
+	if got := leaderboardDisplayName(entry, "viewer", "Full Server Nickname"); got != "Full Server Nickname" {
+		t.Fatalf("viewer display name = %q", got)
+	}
+	if got := leaderboardDisplayName(entry, "someone-else", "Other Nickname"); got != "Old game name" {
+		t.Fatalf("non-viewer display name = %q", got)
+	}
+}
