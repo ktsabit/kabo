@@ -8,7 +8,7 @@ A playable, server-authoritative Kabo card game. It runs as a normal web app for
 - Four face-down cards per player in a stable two-row hand that expands to the right and closes same-row gaps with a visible horizontal slide.
 - Draw, replace, or discard turns.
 - 7/8 own peek, 9/10 opponent peek, J/Q any-two-card swap, and K opponent peek followed by any-two-card swap.
-- Server-ordered slap races for every new discard. The first valid slap wins; later stale or incorrect slaps add a penalty and show the card briefly to everyone.
+- Server-ordered slap races for every new discard. The first valid slap wins; later stale, rank-correct, or otherwise incorrect slaps add a penalty and show the card briefly to everyone.
 - Wrong slap penalty cards and the opponent-card slap/gift flow.
 - Immediate round endings for an exhausted pile, an empty hand, or a call of Kabo.
 - Full scoring, including Jokers at 0 and red Kings at −1.
@@ -124,7 +124,7 @@ Discord Activities route network traffic through their proxy. WebSockets are sup
 - Calling Kabo is allowed at the start of your own turn and ends the round immediately.
 - K's peek and swap are both mandatory; the peeked card may be one side of the swap.
 - J/Q/K swaps require two different occupied slots, but both slots may belong to the same player.
-- A successful slap creates a new discard event, allowing same-rank slap chains. If it targets an opponent, that gift is resolved before the next slap in the chain.
+- A successful slap wins the race for that discard and closes its slap slot. A next slap against the slapped top card is penalized; if it targets an opponent, that gift is resolved after the race is already closed.
 - The active turn is completed before an empty draw pile ends the round, except when a penalty needs a card and none remains.
 - A round starts only when every selected player is connected and ready; the previous winner gets the first turn when they join the next round.
 - A failed Kabo call marks the caller as the loser even if another player has a higher score; the lowest score still determines the winner.

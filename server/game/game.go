@@ -66,31 +66,32 @@ type pendingGift struct {
 type Game struct {
 	mu sync.Mutex
 
-	ID             string
-	Players        []*Player
-	Waiting        []*WaitingPlayer
-	Phase          Phase
-	Current        int
-	Deck           []Card
-	Discard        []Card
-	Drawn          *Card
-	DiscardEventID int
-	ActionEventID  int
-	InitialPending map[string]bool
-	Reveal         *privateReveal
-	Action         *ActionView
-	Gift           *pendingGift
-	ActorID        string
-	EndReason      string
-	WinnerIDs      []string
-	LoserIDs       []string
-	NextStarterID  string
-	RoundNumber    int
-	RoundStartedAt time.Time
-	RoundEndedAt   time.Time
-	CalledBy       string
-	DeadlineAt     time.Time
-	rng            *rand.Rand
+	ID                 string
+	Players            []*Player
+	Waiting            []*WaitingPlayer
+	Phase              Phase
+	Current            int
+	Deck               []Card
+	Discard            []Card
+	Drawn              *Card
+	DiscardEventID     int
+	lastDiscardWasSlap bool
+	ActionEventID      int
+	InitialPending     map[string]bool
+	Reveal             *privateReveal
+	Action             *ActionView
+	Gift               *pendingGift
+	ActorID            string
+	EndReason          string
+	WinnerIDs          []string
+	LoserIDs           []string
+	NextStarterID      string
+	RoundNumber        int
+	RoundStartedAt     time.Time
+	RoundEndedAt       time.Time
+	CalledBy           string
+	DeadlineAt         time.Time
+	rng                *rand.Rand
 }
 
 func New(id string, rng *rand.Rand) *Game {
@@ -265,6 +266,7 @@ func (g *Game) resetRoundState() {
 	g.Deck = nil
 	g.Discard = nil
 	g.Drawn = nil
+	g.lastDiscardWasSlap = false
 	// Both IDs are client-visible event cursors. Keep them monotonic across
 	// rounds so delayed messages from the previous round cannot be mistaken
 	// for the first discard/action of the new round.
@@ -588,14 +590,11 @@ func (g *Game) slap(playerID string, eventID int, target CardRef) error {
 		return errors.New("slaps are not open")
 	}
 	if len(g.Discard) == 0 || eventID != g.DiscardEventID {
-		var card *Card
-		if targetPlayer := g.player(target.PlayerID); targetPlayer != nil {
-			card, _ = occupiedCard(targetPlayer, target.Slot)
-		}
-		if card == nil && g.Action != nil && g.Action.Kind == "slap" && g.Action.Target != nil && *g.Action.Target == target {
-			card = g.Action.Card
-		}
+		card := g.slapTargetCard(target)
 		return g.wrongSlap(playerID, target, card, "that discard is no longer available")
+	}
+	if g.lastDiscardWasSlap {
+		return g.wrongSlap(playerID, target, g.slapTargetCard(target), "that discard has already been slapped")
 	}
 	if g.Phase == PhaseAwaitGift {
 		return errors.New("the previous slap gift must be resolved first")
@@ -611,6 +610,7 @@ func (g *Game) slap(playerID string, eventID int, target CardRef) error {
 	}
 	targetPlayer.Cards[target.Slot] = nil
 	g.openDiscard(card)
+	g.lastDiscardWasSlap = true
 	g.recordActionWithCard("slap", playerID, nil, nil, &target, card)
 	if target.PlayerID != playerID {
 		g.Gift = &pendingGift{SlapperID: playerID, Target: target, Resume: g.Phase}
@@ -634,6 +634,18 @@ func (g *Game) wrongSlap(playerID string, target CardRef, card *Card, reason str
 		g.end("draw_pile_exhausted")
 	}
 	return actionError{code: "wrong_slap", message: fmt.Sprintf("wrong slap: %s; penalty card added", reason)}
+}
+
+func (g *Game) slapTargetCard(target CardRef) *Card {
+	if targetPlayer := g.player(target.PlayerID); targetPlayer != nil {
+		if card, err := occupiedCard(targetPlayer, target.Slot); err == nil {
+			return card
+		}
+	}
+	if g.Action != nil && g.Action.Kind == "slap" && g.Action.Target != nil && *g.Action.Target == target {
+		return g.Action.Card
+	}
+	return nil
 }
 
 func (g *Game) gift(playerID string, sourceSlot int) error {
@@ -971,6 +983,7 @@ func (g *Game) openDiscard(card *Card) {
 	}
 	g.Discard = append(g.Discard, *card)
 	g.DiscardEventID++
+	g.lastDiscardWasSlap = false
 }
 
 func (g *Game) takeDeckCard() (*Card, bool) {

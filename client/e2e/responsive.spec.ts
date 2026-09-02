@@ -250,6 +250,13 @@ test("each player sees the private opening cards in their real hand positions", 
     await expect(myHand.locator('[data-card-ref="p0:2"] .playing-card, [data-card-ref="p0:3"] .playing-card')).toHaveCount(2);
     await expect(myHand.locator(".opening-card-marker")).toHaveText(["Card 3", "Card 4"]);
     await expect(myHand.locator(".opening-guide .turn-countdown")).toContainText(/\d+s/);
+    for (const viewport of matrix) {
+      await test.step(`opening reveal · ${viewport.name}`, async () => {
+        await page.setViewportSize(viewport);
+        await expectReachable(page, ".my-area .opening-guide .primary-button");
+        await expectNoViewportCropping(page);
+      });
+    }
     await myHand.getByRole("button", { name: "Ready" }).click();
     await expect(myHand.locator(".opening-guide")).toBeHidden();
     await clients[1].waitFor((snapshot) => snapshot.phase === "initial_peek" && snapshot.players?.find((player: any) => player.id === "p0")?.initialReady === true);
@@ -258,6 +265,38 @@ test("each player sees the private opening cards in their real hand positions", 
     await expect(page.locator(".turn-prompt .turn-countdown")).toContainText(/\d+s/);
   } finally {
     clients.forEach((client) => client.close());
+  }
+});
+
+test("both real player views can ready their opening cards and enter play", async ({ page, context }) => {
+  const room = `two-ui-${Date.now()}`;
+  const waa = await context.newPage();
+  try {
+    await page.setViewportSize({ width: 768, height: 500 });
+    await waa.setViewportSize({ width: 768, height: 500 });
+    await page.goto(`/?room=${room}&user=kai&name=Kai`);
+    await waa.goto(`/?room=${room}&user=waa&name=Waa`);
+    await page.getByRole("button", { name: "Check" }).click();
+    await waa.getByRole("button", { name: "Check" }).click();
+    await expect(page.getByRole("button", { name: "Start" })).toBeEnabled();
+    await page.getByRole("button", { name: "Start" }).click();
+
+    await expectReachable(page, '.player-area[data-player-id="kai"] .opening-guide .primary-button');
+    await expectReachable(waa, '.player-area[data-player-id="waa"] .opening-guide .primary-button');
+    await expect(page.locator('.player-area[data-player-id="kai"] .playing-card')).toHaveCount(2);
+    await expect(waa.locator('.player-area[data-player-id="waa"] .playing-card')).toHaveCount(2);
+
+    await waa.locator('.player-area[data-player-id="waa"] .opening-guide .primary-button').click();
+    await expect(waa.locator(".opening-guide")).toBeHidden();
+    await expect(page.locator('.player-area[data-player-id="waa"] .looking-indicator')).toBeHidden();
+    await page.locator('.player-area[data-player-id="kai"] .opening-guide .primary-button').click();
+    await expect(page.locator(".opening-guide")).toBeHidden();
+    await expect(waa.locator(".turn-prompt")).toBeVisible();
+    const activePage = await page.locator(".deck").isEnabled() ? page : waa;
+    await activePage.locator(".deck").click();
+    await expect(activePage.locator(".drawn-card-zone")).toBeVisible();
+  } finally {
+    await waa.close();
   }
 });
 

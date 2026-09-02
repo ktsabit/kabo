@@ -743,7 +743,9 @@ function PlayerArea({ player, handLayout, snapshot, selected, onCard, onSlap, on
                     {slot.occupied
                       ? slot.card && revealEnded
                         ? <PlayingCard card={slot.card} compact flipped />
-                        : <PeekableCard card={revealed} compact />
+                        : initialRevealHere && revealed
+                          ? <PlayingCard card={revealed} compact />
+                          : <PeekableCard card={revealed} compact />
                       : <div className="empty-slot" />}
                   </button>
                   {isSelected && <span className="selection-order" aria-hidden="true">{selectionOrder}</span>}
