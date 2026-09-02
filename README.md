@@ -18,7 +18,7 @@ A playable, server-authoritative Kabo card game. It runs as a normal web app for
 - Mid-round spectators, a compact next-round roster capped at eight, and automatic promotion into the next round.
 - Lobby readiness checks for every selected player, with the previous round's winner starting the next round.
 - Configurable server deadlines: 30 seconds for the opening peek, 15 seconds for turn phases, and 3 seconds for reveal acknowledgement by default; a drawn card is discarded automatically when possible, otherwise the turn advances.
-- SQLite round history with player scores, winners, losers, Kabo callers, and failed Kabo calls.
+- SQLite audit history with Activity/room metadata (application, instance, guild, channel, location, platform, and launch identifiers), player scores and outcomes, and a chronological per-round event log.
 - Flowing power/discard indicators, queued slap animations, face-up late/wrong slap penalty flights, and a responsive table shell for narrow or short Discord viewports.
 
 Card faces use the CC0-licensed [`@letele/playing-cards`](https://github.com/letele/playing-cards) SVG deck, based on Adrian Kennard's classic designs. The custom indigo bear artwork remains the card back.

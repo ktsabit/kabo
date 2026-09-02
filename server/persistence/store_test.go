@@ -1,6 +1,8 @@
 package persistence
 
 import (
+	"database/sql"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -15,15 +17,33 @@ func TestRecordRoundIsIdempotentAndStoresPlayers(t *testing.T) {
 	defer store.Close()
 
 	result := game.RoundResult{
-		RoomID:    "room",
-		Round:     3,
-		StartedAt: time.Unix(10, 0),
-		EndedAt:   time.Unix(20, 0),
-		EndReason: "called_end",
-		CalledBy:  "b",
+		RoomID:        "room",
+		Platform:      "discord",
+		ApplicationID: "app-123",
+		InstanceID:    "instance-123",
+		GuildID:       "guild-123",
+		ChannelID:     "channel-123",
+		LocationID:    "guild",
+		CustomID:      "launch",
+		ReferrerID:    "referrer",
+		Round:         3,
+		StartedAt:     time.Unix(10, 0),
+		EndedAt:       time.Unix(20, 0),
+		EndReason:     "called_end",
+		CalledBy:      "b",
 		Players: []game.PlayerResult{
-			{ID: "a", Name: "Ada", Score: 4, Winner: true},
-			{ID: "b", Name: "Ben", Score: 9, Loser: true, CalledKabo: true, KaboFailed: true},
+			{ID: "a", Name: "Ada", Seat: 0, CardCount: 2, Connected: true, Score: 4, Winner: true},
+			{ID: "b", Name: "Ben", Seat: 1, CardCount: 3, Connected: true, Score: 9, Loser: true, CalledKabo: true, KaboFailed: true},
+		},
+		Events: []game.RoundEvent{
+			{
+				Sequence: 1,
+				At:       time.Unix(15, 0),
+				Kind:     "slap",
+				ActorID:  "b",
+				Target:   &game.CardRef{PlayerID: "a", Slot: 2},
+				Card:     &game.Card{ID: "card-5", Rank: 5, Suit: game.Hearts},
+			},
 		},
 	}
 	if err := store.RecordRound(result); err != nil {
@@ -33,15 +53,18 @@ func TestRecordRoundIsIdempotentAndStoresPlayers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var rounds, players int
+	var rounds, players, events int
 	if err := store.db.QueryRow(`SELECT COUNT(*) FROM rounds`).Scan(&rounds); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.db.QueryRow(`SELECT COUNT(*) FROM round_players`).Scan(&players); err != nil {
 		t.Fatal(err)
 	}
-	if rounds != 1 || players != 2 {
-		t.Fatalf("stored rows = rounds:%d players:%d, want 1 and 2", rounds, players)
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM round_events`).Scan(&events); err != nil {
+		t.Fatal(err)
+	}
+	if rounds != 1 || players != 2 || events != 1 {
+		t.Fatalf("stored rows = rounds:%d players:%d events:%d, want 1, 2, and 1", rounds, players, events)
 	}
 
 	var loser, failed int
@@ -50,5 +73,104 @@ func TestRecordRoundIsIdempotentAndStoresPlayers(t *testing.T) {
 	}
 	if loser != 1 || failed != 1 {
 		t.Fatalf("failed Kabo result was not stored: loser=%d failed=%d", loser, failed)
+	}
+
+	var platform, applicationID, instanceID, guildID, channelID, locationID, customID, referrerID string
+	var playerCount, eventCount, durationMS int64
+	if err := store.db.QueryRow(`
+		SELECT platform, application_id, instance_id, guild_id, channel_id, location_id,
+			custom_id, referrer_id, player_count, event_count, duration_ms
+		FROM rounds WHERE room_id = 'room' AND round_number = 3
+	`).Scan(&platform, &applicationID, &instanceID, &guildID, &channelID, &locationID, &customID, &referrerID, &playerCount, &eventCount, &durationMS); err != nil {
+		t.Fatal(err)
+	}
+	if platform != "discord" || applicationID != "app-123" || instanceID != "instance-123" || guildID != "guild-123" || channelID != "channel-123" || locationID != "guild" || customID != "launch" || referrerID != "referrer" || playerCount != 2 || eventCount != 1 || durationMS != 10000 {
+		t.Fatalf("round metadata was not stored: platform=%q app=%q instance=%q guild=%q channel=%q location=%q custom=%q referrer=%q players=%d events=%d duration=%d", platform, applicationID, instanceID, guildID, channelID, locationID, customID, referrerID, playerCount, eventCount, durationMS)
+	}
+
+	var seat, cardCount, connected int
+	if err := store.db.QueryRow(`SELECT seat_index, card_count, connected FROM round_players WHERE player_id = 'b'`).Scan(&seat, &cardCount, &connected); err != nil {
+		t.Fatal(err)
+	}
+	if seat != 1 || cardCount != 3 || connected != 1 {
+		t.Fatalf("player metadata was not stored: seat=%d cards=%d connected=%d", seat, cardCount, connected)
+	}
+
+	var kind, actorID, targetPlayerID, cardID, cardSuit string
+	var targetSlot, cardRank int
+	if err := store.db.QueryRow(`
+		SELECT kind, actor_id, target_player_id, target_slot, card_id, card_rank, card_suit
+		FROM round_events WHERE round_id = (SELECT id FROM rounds WHERE room_id = 'room' AND round_number = 3)
+	`).Scan(&kind, &actorID, &targetPlayerID, &targetSlot, &cardID, &cardRank, &cardSuit); err != nil {
+		t.Fatal(err)
+	}
+	if kind != "slap" || actorID != "b" || targetPlayerID != "a" || targetSlot != 2 || cardID != "card-5" || cardRank != 5 || cardSuit != "hearts" {
+		t.Fatalf("event details were not stored: kind=%q actor=%q target=%q:%d card=%q/%d/%q", kind, actorID, targetPlayerID, targetSlot, cardID, cardRank, cardSuit)
+	}
+}
+
+func TestOpenMigratesLegacyRoundTables(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.sqlite")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`
+		CREATE TABLE rounds (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			room_id TEXT NOT NULL,
+			round_number INTEGER NOT NULL,
+			started_at TEXT NOT NULL,
+			ended_at TEXT NOT NULL,
+			end_reason TEXT NOT NULL,
+			called_by TEXT NOT NULL DEFAULT '',
+			UNIQUE (room_id, round_number)
+		);
+		CREATE TABLE round_players (
+			round_id INTEGER NOT NULL REFERENCES rounds(id) ON DELETE CASCADE,
+			player_id TEXT NOT NULL,
+			display_name TEXT NOT NULL,
+			score INTEGER NOT NULL,
+			is_winner INTEGER NOT NULL CHECK (is_winner IN (0, 1)),
+			called_kabo INTEGER NOT NULL CHECK (called_kabo IN (0, 1)),
+			kabo_failed INTEGER NOT NULL CHECK (kabo_failed IN (0, 1)),
+			PRIMARY KEY (round_id, player_id)
+		);
+	`)
+	if err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	result := game.RoundResult{
+		RoomID:    "legacy-room",
+		Round:     1,
+		StartedAt: time.Unix(10, 0),
+		EndedAt:   time.Unix(11, 0),
+		EndReason: "called_end",
+		Players: []game.PlayerResult{
+			{ID: "legacy-player", Name: "Legacy", Connected: true, Winner: true},
+		},
+	}
+	if err := store.RecordRound(result); err != nil {
+		t.Fatal(err)
+	}
+
+	var instanceID string
+	var playerCount int
+	if err := store.db.QueryRow(`SELECT instance_id, player_count FROM rounds WHERE room_id = 'legacy-room'`).Scan(&instanceID, &playerCount); err != nil {
+		t.Fatal(err)
+	}
+	if instanceID != "legacy-room" || playerCount != 1 {
+		t.Fatalf("legacy round was not migrated: instance=%q players=%d", instanceID, playerCount)
 	}
 }

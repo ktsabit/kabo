@@ -39,6 +39,10 @@ func (g *Game) TimeoutKind() string {
 // Timeout applies the safe server-side fallback for a phase whose deadline
 // elapsed. It is called under the room/game lock by the transport layer.
 func (g *Game) Timeout() error {
+	if g.Phase == PhaseLobby || g.Phase == PhaseEnded {
+		return nil
+	}
+	g.recordRoundEvent("timeout", g.currentPlayerID(), nil, nil, nil, nil, string(g.Phase))
 	switch g.Phase {
 	case PhaseInitialPeek:
 		for id, pending := range g.InitialPending {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"kabo/server/auth"
+	"kabo/server/game"
 	"kabo/server/persistence"
 	"kabo/server/transport"
 
@@ -109,6 +110,11 @@ func (s *server) handleToken(w http.ResponseWriter, r *http.Request) {
 		Code       string `json:"code"`
 		InstanceID string `json:"instanceId"`
 		GuildID    string `json:"guildId"`
+		ChannelID  string `json:"channelId"`
+		LocationID string `json:"locationId"`
+		Platform   string `json:"platform"`
+		CustomID   string `json:"customId"`
+		ReferrerID string `json:"referrerId"`
 	}
 
 	if err := json.NewDecoder(
@@ -116,7 +122,12 @@ func (s *server) handleToken(w http.ResponseWriter, r *http.Request) {
 	).Decode(&body); err != nil ||
 		body.Code == "" ||
 		!safeID.MatchString(body.InstanceID) ||
-		(body.GuildID != "" && !safeID.MatchString(body.GuildID)) {
+		(body.GuildID != "" && !safeID.MatchString(body.GuildID)) ||
+		(body.ChannelID != "" && !safeID.MatchString(body.ChannelID)) ||
+		(body.LocationID != "" && !safeID.MatchString(body.LocationID)) ||
+		(body.Platform != "" && !safeID.MatchString(body.Platform)) ||
+		(body.CustomID != "" && !safeID.MatchString(body.CustomID)) ||
+		(body.ReferrerID != "" && !safeID.MatchString(body.ReferrerID)) {
 		http.Error(w, "invalid token request", http.StatusBadRequest)
 		return
 	}
@@ -145,8 +156,21 @@ func (s *server) handleToken(w http.ResponseWriter, r *http.Request) {
 		lifetime = time.Duration(token.ExpiresIn) * time.Second
 	}
 
-	// Identity is intentionally a value here; Sessions.Create expects auth.Identity.
-	sessionID, err := s.sessions.Create(*identity, body.InstanceID, lifetime)
+	// Identity is intentionally a value here; Sessions.CreateWithMetadata expects auth.Identity.
+	platform := body.Platform
+	if platform == "" {
+		platform = "discord"
+	}
+	sessionID, err := s.sessions.CreateWithMetadata(*identity, body.InstanceID, auth.SessionMetadata{
+		Platform:      platform,
+		ApplicationID: s.discord.ClientID,
+		InstanceID:    body.InstanceID,
+		GuildID:       body.GuildID,
+		ChannelID:     body.ChannelID,
+		LocationID:    body.LocationID,
+		CustomID:      body.CustomID,
+		ReferrerID:    body.ReferrerID,
+	}, lifetime)
 	if err != nil {
 		http.Error(w, "could not create game session", http.StatusInternalServerError)
 		return
@@ -170,9 +194,21 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	var identity auth.Identity
 	var err error
+	roomMetadata := game.RoomMetadata{Platform: "browser", InstanceID: roomID}
 
 	if sessionID := r.URL.Query().Get("session"); sessionID != "" {
-		identity, err = s.sessions.Resolve(sessionID, roomID)
+		var sessionMetadata auth.SessionMetadata
+		identity, sessionMetadata, err = s.sessions.ResolveWithMetadata(sessionID, roomID)
+		roomMetadata = game.RoomMetadata{
+			Platform:      sessionMetadata.Platform,
+			ApplicationID: sessionMetadata.ApplicationID,
+			InstanceID:    sessionMetadata.InstanceID,
+			GuildID:       sessionMetadata.GuildID,
+			ChannelID:     sessionMetadata.ChannelID,
+			LocationID:    sessionMetadata.LocationID,
+			CustomID:      sessionMetadata.CustomID,
+			ReferrerID:    sessionMetadata.ReferrerID,
+		}
 	} else if s.allowGuests {
 		identity = auth.Identity{
 			ID:   r.URL.Query().Get("user"),
@@ -200,10 +236,11 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client, err := s.rooms.Join(
+	client, err := s.rooms.JoinWithMetadata(
 		roomID,
 		identity.ID,
 		identity.Name,
+		roomMetadata,
 		conn,
 	)
 	if err != nil {

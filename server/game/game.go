@@ -67,6 +67,14 @@ type Game struct {
 	mu sync.Mutex
 
 	ID                 string
+	Platform           string
+	ApplicationID      string
+	InstanceID         string
+	GuildID            string
+	ChannelID          string
+	LocationID         string
+	CustomID           string
+	ReferrerID         string
 	Players            []*Player
 	Waiting            []*WaitingPlayer
 	Phase              Phase
@@ -91,6 +99,8 @@ type Game struct {
 	RoundEndedAt       time.Time
 	CalledBy           string
 	DeadlineAt         time.Time
+	events             []RoundEvent
+	eventSequence      int
 	rng                *rand.Rand
 }
 
@@ -98,7 +108,40 @@ func New(id string, rng *rand.Rand) *Game {
 	if rng == nil {
 		rng = rand.New(rand.NewSource(rand.Int63()))
 	}
-	return &Game{ID: id, Phase: PhaseLobby, InitialPending: map[string]bool{}, rng: rng}
+	return &Game{
+		ID:             id,
+		Platform:       "browser",
+		InstanceID:     id,
+		Phase:          PhaseLobby,
+		InitialPending: map[string]bool{},
+		rng:            rng,
+	}
+}
+
+func NewWithMetadata(id string, rng *rand.Rand, metadata RoomMetadata) *Game {
+	g := New(id, rng)
+	g.SetRoomMetadata(metadata)
+	return g
+}
+
+func (g *Game) SetRoomMetadata(metadata RoomMetadata) {
+	if metadata.Platform != "" && (g.Platform == "" || (g.Platform == "browser" && metadata.Platform != "browser")) {
+		g.Platform = metadata.Platform
+	}
+	setIfEmpty := func(current *string, incoming string) {
+		if *current == "" && incoming != "" {
+			*current = incoming
+		}
+	}
+	setIfEmpty(&g.ApplicationID, metadata.ApplicationID)
+	if metadata.InstanceID != "" {
+		g.InstanceID = metadata.InstanceID
+	}
+	setIfEmpty(&g.GuildID, metadata.GuildID)
+	setIfEmpty(&g.ChannelID, metadata.ChannelID)
+	setIfEmpty(&g.LocationID, metadata.LocationID)
+	setIfEmpty(&g.CustomID, metadata.CustomID)
+	setIfEmpty(&g.ReferrerID, metadata.ReferrerID)
 }
 
 func (g *Game) Lock()   { g.mu.Lock() }
@@ -181,7 +224,7 @@ func (g *Game) Apply(playerID string, msg ClientMessage) error {
 
 	switch msg.Type {
 	case "start_game":
-		return g.start()
+		return g.start(playerID)
 	case "acknowledge_initial":
 		return g.acknowledgeInitial(playerID)
 	case "draw":
@@ -207,7 +250,7 @@ func (g *Game) Apply(playerID string, msg ClientMessage) error {
 	}
 }
 
-func (g *Game) start() error {
+func (g *Game) start(playerID string) error {
 	if g.Phase != PhaseLobby && g.Phase != PhaseEnded {
 		return errors.New("game is already started")
 	}
@@ -233,6 +276,7 @@ func (g *Game) start() error {
 	}
 	g.RoundNumber++
 	g.RoundStartedAt = time.Now()
+	g.recordRoundEvent("start_game", playerID, nil, nil, nil, nil, "")
 	g.Deck = newDeck()
 	g.rng.Shuffle(len(g.Deck), func(i, j int) { g.Deck[i], g.Deck[j] = g.Deck[j], g.Deck[i] })
 	for round := 0; round < 4; round++ {
@@ -275,6 +319,8 @@ func (g *Game) resetRoundState() {
 	g.Action = nil
 	g.Gift = nil
 	g.ActorID = ""
+	g.events = nil
+	g.eventSequence = 0
 	g.EndReason = ""
 	g.WinnerIDs = nil
 	g.LoserIDs = nil
@@ -457,6 +503,7 @@ func (g *Game) draw(playerID string) error {
 	}
 	g.Drawn = card
 	g.Phase = PhaseAwaitChoice
+	g.recordRoundEvent("draw", playerID, nil, nil, nil, card, "")
 	return nil
 }
 
@@ -542,6 +589,7 @@ func (g *Game) peek(playerID string, target CardRef) error {
 	}
 	g.Reveal = &privateReveal{Kind: kind, Viewer: playerID, Cards: []RevealCard{{Target: target, Card: *card}}}
 	g.Phase = next
+	g.recordRoundEvent("peek", playerID, nil, nil, &target, card, kind)
 	return nil
 }
 
@@ -624,7 +672,7 @@ func (g *Game) slap(playerID string, eventID int, target CardRef) error {
 }
 
 func (g *Game) wrongSlap(playerID string, target CardRef, card *Card, reason string) error {
-	g.recordActionWithCard("wrong_slap", playerID, nil, nil, &target, card)
+	g.recordActionWithCardReason("wrong_slap", playerID, nil, nil, &target, card, reason)
 	p := g.player(playerID)
 	penaltyCard, ok := g.takeDeckCard()
 	if ok {
@@ -680,6 +728,7 @@ func (g *Game) callEnd(playerID string) error {
 		return errors.New("you may call the end only at the start of your turn")
 	}
 	g.CalledBy = playerID
+	g.recordRoundEvent("call_end", playerID, nil, nil, nil, nil, "")
 	g.end("called_end")
 	return nil
 }
@@ -807,6 +856,11 @@ func (g *Game) recordAction(kind, actorID string, first, second, target *CardRef
 }
 
 func (g *Game) recordActionWithCard(kind, actorID string, first, second, target *CardRef, card *Card) {
+	g.recordActionWithCardReason(kind, actorID, first, second, target, card, "")
+}
+
+func (g *Game) recordActionWithCardReason(kind, actorID string, first, second, target *CardRef, card *Card, reason string) {
+	g.recordRoundEvent(kind, actorID, first, second, target, card, reason)
 	g.ActionEventID++
 	action := &ActionView{ID: g.ActionEventID, Kind: kind, ActorID: actorID, First: first, Second: second, Target: target}
 	if card != nil {
@@ -814,6 +868,34 @@ func (g *Game) recordActionWithCard(kind, actorID string, first, second, target 
 		action.Card = &value
 	}
 	g.Action = action
+}
+
+func (g *Game) recordRoundEvent(kind, actorID string, first, second, target *CardRef, card *Card, reason string) {
+	g.eventSequence++
+	event := RoundEvent{
+		Sequence: g.eventSequence,
+		At:       time.Now(),
+		Kind:     kind,
+		ActorID:  actorID,
+		Reason:   reason,
+	}
+	if first != nil {
+		value := *first
+		event.First = &value
+	}
+	if second != nil {
+		value := *second
+		event.Second = &value
+	}
+	if target != nil {
+		value := *target
+		event.Target = &value
+	}
+	if card != nil {
+		value := *card
+		event.Card = &value
+	}
+	g.events = append(g.events, event)
 }
 
 func (g *Game) View(viewerID string) Snapshot {

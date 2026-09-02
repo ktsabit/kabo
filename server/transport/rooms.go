@@ -85,11 +85,15 @@ func NewManager(config ...ManagerConfig) *Manager {
 }
 
 func (m *Manager) Join(roomID, playerID, name string, conn *websocket.Conn) (*Client, error) {
+	return m.JoinWithMetadata(roomID, playerID, name, game.RoomMetadata{Platform: "browser", InstanceID: roomID}, conn)
+}
+
+func (m *Manager) JoinWithMetadata(roomID, playerID, name string, metadata game.RoomMetadata, conn *websocket.Conn) (*Client, error) {
 	m.mu.Lock()
 	room := m.rooms[roomID]
 	if room == nil {
 		room = &Room{
-			game:     game.New(roomID, rand.New(rand.NewSource(rand.Int63()))),
+			game:     game.NewWithMetadata(roomID, rand.New(rand.NewSource(rand.Int63())), metadata),
 			clients:  map[string]*Client{},
 			timeouts: m.timeouts,
 			results:  m.results,
@@ -100,6 +104,7 @@ func (m *Manager) Join(roomID, playerID, name string, conn *websocket.Conn) (*Cl
 
 	room.mu.Lock()
 	room.game.Lock()
+	room.game.SetRoomMetadata(metadata)
 	_, err := room.game.AddOrReconnect(playerID, name)
 	room.game.Unlock()
 	if err != nil {

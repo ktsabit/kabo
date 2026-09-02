@@ -49,6 +49,19 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	if err := ensureRoundColumns(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err := db.Exec(`
+		CREATE INDEX IF NOT EXISTS rounds_guild_idx ON rounds (guild_id);
+		CREATE INDEX IF NOT EXISTS rounds_instance_idx ON rounds (instance_id);
+		CREATE INDEX IF NOT EXISTS rounds_started_idx ON rounds (started_at);
+		CREATE INDEX IF NOT EXISTS round_events_kind_idx ON round_events (kind)
+	`); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return &Store{db: db}, nil
 }
 
@@ -72,15 +85,40 @@ func (s *Store) RecordRound(result game.RoundResult) error {
 		return err
 	}
 	defer tx.Rollback()
+	instanceID := result.InstanceID
+	if instanceID == "" {
+		instanceID = result.RoomID
+	}
+	durationMS := int64(0)
+	if result.EndedAt.After(result.StartedAt) {
+		durationMS = result.EndedAt.Sub(result.StartedAt).Milliseconds()
+	}
 	_, err = tx.Exec(`
-		INSERT INTO rounds (room_id, round_number, started_at, ended_at, end_reason, called_by)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO rounds (
+			room_id, platform, application_id, instance_id, guild_id, channel_id,
+			location_id, custom_id, referrer_id, round_number, player_count,
+			event_count, started_at, ended_at, duration_ms, end_reason, called_by
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (room_id, round_number) DO UPDATE SET
+			platform = excluded.platform,
+			application_id = excluded.application_id,
+			instance_id = excluded.instance_id,
+			guild_id = excluded.guild_id,
+			channel_id = excluded.channel_id,
+			location_id = excluded.location_id,
+			custom_id = excluded.custom_id,
+			referrer_id = excluded.referrer_id,
+			player_count = excluded.player_count,
+			event_count = excluded.event_count,
 			started_at = excluded.started_at,
 			ended_at = excluded.ended_at,
+			duration_ms = excluded.duration_ms,
 			end_reason = excluded.end_reason,
 			called_by = excluded.called_by
-	`, result.RoomID, result.Round, timestamp(result.StartedAt), timestamp(result.EndedAt), result.EndReason, result.CalledBy)
+	`, result.RoomID, result.Platform, result.ApplicationID, instanceID, result.GuildID, result.ChannelID,
+		result.LocationID, result.CustomID, result.ReferrerID, result.Round, len(result.Players), len(result.Events),
+		timestamp(result.StartedAt), timestamp(result.EndedAt), durationMS, result.EndReason, result.CalledBy)
 	if err != nil {
 		return err
 	}
@@ -89,23 +127,76 @@ func (s *Store) RecordRound(result game.RoundResult) error {
 	if err := tx.QueryRow(`SELECT id FROM rounds WHERE room_id = ? AND round_number = ?`, result.RoomID, result.Round).Scan(&roundID); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(`DELETE FROM round_players WHERE round_id = ?`, roundID); err != nil {
+		return err
+	}
 	for _, player := range result.Players {
 		_, err = tx.Exec(`
-			INSERT INTO round_players (round_id, player_id, display_name, score, is_winner, is_loser, called_kabo, kabo_failed)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT (round_id, player_id) DO UPDATE SET
-				display_name = excluded.display_name,
-				score = excluded.score,
-				is_winner = excluded.is_winner,
-				is_loser = excluded.is_loser,
-				called_kabo = excluded.called_kabo,
-				kabo_failed = excluded.kabo_failed
-		`, roundID, player.ID, player.Name, player.Score, boolInt(player.Winner), boolInt(player.Loser), boolInt(player.CalledKabo), boolInt(player.KaboFailed))
+			INSERT INTO round_players (
+				round_id, player_id, display_name, seat_index, card_count, connected,
+				score, is_winner, is_loser, called_kabo, kabo_failed
+			)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, roundID, player.ID, player.Name, player.Seat, player.CardCount, boolInt(player.Connected), player.Score,
+			boolInt(player.Winner), boolInt(player.Loser), boolInt(player.CalledKabo), boolInt(player.KaboFailed))
+		if err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM round_events WHERE round_id = ?`, roundID); err != nil {
+		return err
+	}
+	for _, event := range result.Events {
+		_, err = tx.Exec(`
+			INSERT INTO round_events (
+				round_id, sequence, occurred_at, kind, actor_id,
+				first_player_id, first_slot, second_player_id, second_slot,
+				target_player_id, target_slot, card_id, card_rank, card_suit, reason
+			)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, roundID, event.Sequence, timestamp(event.At), event.Kind, event.ActorID,
+			refPlayer(event.First), refSlot(event.First), refPlayer(event.Second), refSlot(event.Second),
+			refPlayer(event.Target), refSlot(event.Target), cardID(event.Card), cardRank(event.Card), cardSuit(event.Card), event.Reason)
 		if err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
+}
+
+func refPlayer(ref *game.CardRef) any {
+	if ref == nil {
+		return nil
+	}
+	return ref.PlayerID
+}
+
+func refSlot(ref *game.CardRef) any {
+	if ref == nil {
+		return nil
+	}
+	return ref.Slot
+}
+
+func cardID(card *game.Card) any {
+	if card == nil {
+		return nil
+	}
+	return card.ID
+}
+
+func cardRank(card *game.Card) any {
+	if card == nil {
+		return nil
+	}
+	return card.Rank
+}
+
+func cardSuit(card *game.Card) any {
+	if card == nil {
+		return nil
+	}
+	return string(card.Suit)
 }
 
 func timestamp(value time.Time) string {
@@ -126,9 +217,20 @@ const schema = `
 CREATE TABLE IF NOT EXISTS rounds (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     room_id TEXT NOT NULL,
+    platform TEXT NOT NULL DEFAULT '',
+    application_id TEXT NOT NULL DEFAULT '',
+    instance_id TEXT NOT NULL DEFAULT '',
+    guild_id TEXT NOT NULL DEFAULT '',
+    channel_id TEXT NOT NULL DEFAULT '',
+    location_id TEXT NOT NULL DEFAULT '',
+    custom_id TEXT NOT NULL DEFAULT '',
+    referrer_id TEXT NOT NULL DEFAULT '',
     round_number INTEGER NOT NULL,
+    player_count INTEGER NOT NULL DEFAULT 0,
+    event_count INTEGER NOT NULL DEFAULT 0,
     started_at TEXT NOT NULL,
     ended_at TEXT NOT NULL,
+    duration_ms INTEGER NOT NULL DEFAULT 0,
     end_reason TEXT NOT NULL,
     called_by TEXT NOT NULL DEFAULT '',
     UNIQUE (room_id, round_number)
@@ -138,6 +240,9 @@ CREATE TABLE IF NOT EXISTS round_players (
     round_id INTEGER NOT NULL REFERENCES rounds(id) ON DELETE CASCADE,
     player_id TEXT NOT NULL,
     display_name TEXT NOT NULL,
+    seat_index INTEGER NOT NULL DEFAULT -1,
+    card_count INTEGER NOT NULL DEFAULT 0,
+    connected INTEGER NOT NULL DEFAULT 1 CHECK (connected IN (0, 1)),
     score INTEGER NOT NULL,
     is_winner INTEGER NOT NULL CHECK (is_winner IN (0, 1)),
     is_loser INTEGER NOT NULL DEFAULT 0 CHECK (is_loser IN (0, 1)),
@@ -148,16 +253,79 @@ CREATE TABLE IF NOT EXISTS round_players (
 
 CREATE INDEX IF NOT EXISTS round_players_score_idx ON round_players (score);
 CREATE INDEX IF NOT EXISTS round_players_winner_idx ON round_players (is_winner);
+
+CREATE TABLE IF NOT EXISTS round_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    round_id INTEGER NOT NULL REFERENCES rounds(id) ON DELETE CASCADE,
+    sequence INTEGER NOT NULL,
+    occurred_at TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    actor_id TEXT NOT NULL DEFAULT '',
+    first_player_id TEXT,
+    first_slot INTEGER,
+    second_player_id TEXT,
+    second_slot INTEGER,
+    target_player_id TEXT,
+    target_slot INTEGER,
+    card_id TEXT,
+    card_rank INTEGER,
+    card_suit TEXT,
+    reason TEXT NOT NULL DEFAULT '',
+    UNIQUE (round_id, sequence)
+);
 `
 
 func ensureRoundPlayerColumns(db *sql.DB) error {
-	rows, err := db.Query(`PRAGMA table_info(round_players)`)
+	return ensureTableColumns(db, "round_players", []tableColumn{
+		{name: "is_loser", definition: "INTEGER NOT NULL DEFAULT 0 CHECK (is_loser IN (0, 1))"},
+		{name: "seat_index", definition: "INTEGER NOT NULL DEFAULT -1"},
+		{name: "card_count", definition: "INTEGER NOT NULL DEFAULT 0"},
+		{name: "connected", definition: "INTEGER NOT NULL DEFAULT 1 CHECK (connected IN (0, 1))"},
+	})
+}
+
+func ensureRoundColumns(db *sql.DB) error {
+	if err := ensureTableColumns(db, "rounds", []tableColumn{
+		{name: "platform", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "application_id", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "instance_id", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "guild_id", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "channel_id", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "location_id", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "custom_id", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "referrer_id", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "player_count", definition: "INTEGER NOT NULL DEFAULT 0"},
+		{name: "event_count", definition: "INTEGER NOT NULL DEFAULT 0"},
+		{name: "duration_ms", definition: "INTEGER NOT NULL DEFAULT 0"},
+	}); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`UPDATE rounds SET instance_id = room_id WHERE instance_id = ''`); err != nil {
+		return err
+	}
+	_, err := db.Exec(`
+		UPDATE rounds
+		SET player_count = (
+			SELECT COUNT(*) FROM round_players WHERE round_players.round_id = rounds.id
+		)
+		WHERE player_count = 0
+	`)
+	return err
+}
+
+type tableColumn struct {
+	name       string
+	definition string
+}
+
+func ensureTableColumns(db *sql.DB, table string, columns []tableColumn) error {
+	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 
-	hasLoser := false
+	existing := map[string]bool{}
 	for rows.Next() {
 		var (
 			cid          int
@@ -170,19 +338,21 @@ func ensureRoundPlayerColumns(db *sql.DB) error {
 		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
 			return err
 		}
-		if name == "is_loser" {
-			hasLoser = true
-		}
+		existing[name] = true
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	if hasLoser {
-		return nil
-	}
 	if err := rows.Close(); err != nil {
 		return err
 	}
-	_, err = db.Exec(`ALTER TABLE round_players ADD COLUMN is_loser INTEGER NOT NULL DEFAULT 0 CHECK (is_loser IN (0, 1))`)
-	return err
+	for _, column := range columns {
+		if existing[column.name] {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + column.name + ` ` + column.definition); err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -106,6 +106,11 @@ async function initializeDiscord(): Promise<PlatformSession> {
       code,
       instanceId: sdk.instanceId,
       guildId: sdk.guildId,
+      channelId: sdk.channelId,
+      locationId: sdk.locationId,
+      platform: sdk.platform,
+      customId: sdk.customId,
+      referrerId: sdk.referrerId,
     }),
   });
 
