@@ -16,6 +16,14 @@ type Store struct {
 	db *sql.DB
 }
 
+type LeaderboardEntry struct {
+	PlayerID    string
+	DisplayName string
+	Games       int
+	Wins        int
+	TotalScore  int
+}
+
 func Open(path string) (*Store, error) {
 	if path == "" {
 		return nil, errors.New("database path is empty")
@@ -162,6 +170,71 @@ func (s *Store) RecordRound(result game.RoundResult) error {
 		}
 	}
 	return tx.Commit()
+}
+
+func (s *Store) Leaderboard(guildID string, limit int) ([]LeaderboardEntry, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("database is not open")
+	}
+	if guildID == "" {
+		return nil, errors.New("guild ID is empty")
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 25 {
+		limit = 25
+	}
+
+	rows, err := s.db.Query(`
+		SELECT stats.player_id,
+			COALESCE((
+				SELECT latest.display_name
+				FROM round_players latest
+				JOIN rounds latest_round ON latest_round.id = latest.round_id
+				WHERE latest.player_id = stats.player_id
+					AND latest_round.platform = 'discord'
+					AND latest_round.guild_id = ?
+				ORDER BY latest_round.ended_at DESC, latest_round.id DESC
+				LIMIT 1
+			), '') AS display_name,
+			stats.games,
+			stats.wins,
+			stats.total_score
+		FROM (
+			SELECT rp.player_id,
+				COUNT(*) AS games,
+				SUM(rp.is_winner) AS wins,
+				SUM(rp.score) AS total_score
+			FROM round_players rp
+			JOIN rounds r ON r.id = rp.round_id
+			WHERE r.platform = 'discord' AND r.guild_id = ?
+			GROUP BY rp.player_id
+		) stats
+		ORDER BY stats.total_score ASC, stats.wins DESC, stats.games DESC,
+			COALESCE(display_name, stats.player_id) COLLATE NOCASE ASC
+		LIMIT ?
+	`, guildID, guildID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	entries := make([]LeaderboardEntry, 0, limit)
+	for rows.Next() {
+		var entry LeaderboardEntry
+		if err := rows.Scan(&entry.PlayerID, &entry.DisplayName, &entry.Games, &entry.Wins, &entry.TotalScore); err != nil {
+			return nil, err
+		}
+		if entry.DisplayName == "" {
+			entry.DisplayName = entry.PlayerID
+		}
+		entries = append(entries, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return entries, nil
 }
 
 func refPlayer(ref *game.CardRef) any {

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,11 +25,13 @@ import (
 var safeID = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,128}$`)
 
 type server struct {
-	rooms       *transport.Manager
-	sessions    *auth.Sessions
-	discord     auth.Discord
-	allowGuests bool
-	upgrader    websocket.Upgrader
+	rooms                *transport.Manager
+	sessions             *auth.Sessions
+	results              *persistence.Store
+	discord              auth.Discord
+	interactionPublicKey ed25519.PublicKey
+	allowGuests          bool
+	upgrader             websocket.Upgrader
 }
 
 func main() {
@@ -48,12 +52,14 @@ func main() {
 			Results: results,
 		}),
 		sessions: auth.NewSessions(),
+		results:  results,
 		discord: auth.Discord{
 			ClientID:     os.Getenv("DISCORD_CLIENT_ID"),
 			ClientSecret: os.Getenv("DISCORD_CLIENT_SECRET"),
 			BotToken:     os.Getenv("DISCORD_BOT_TOKEN"),
 		},
-		allowGuests: strings.EqualFold(env("ALLOW_GUESTS", "true"), "true"),
+		interactionPublicKey: parseDiscordPublicKey(os.Getenv("DISCORD_PUBLIC_KEY")),
+		allowGuests:          strings.EqualFold(env("ALLOW_GUESTS", "true"), "true"),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				origin := r.Header.Get("Origin")
@@ -85,12 +91,21 @@ func main() {
 	})
 
 	mux.HandleFunc("/api/token", s.handleToken)
+	mux.HandleFunc("/api/discord/interactions", s.handleDiscordInteraction)
 	mux.HandleFunc("/ws", s.handleWebSocket)
 
 	clientDist := env("CLIENT_DIST", "../client/dist")
 	if info, err := os.Stat(clientDist); err == nil && info.IsDir() {
 		fs := http.FileServer(http.Dir(clientDist))
 		mux.HandleFunc("/", spaHandler(clientDist, fs))
+	}
+
+	if strings.EqualFold(env("DISCORD_REGISTER_COMMANDS", "false"), "true") {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := registerLeaderboardCommand(ctx, s.discord.ClientID, s.discord.BotToken, os.Getenv("DISCORD_GUILD_ID")); err != nil {
+			log.Printf("register Discord /leaderboard command: %v", err)
+		}
+		cancel()
 	}
 
 	log.Printf("Kabo server listening on :%s", port)

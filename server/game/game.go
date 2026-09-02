@@ -84,6 +84,8 @@ type Game struct {
 	Drawn              *Card
 	DiscardEventID     int
 	lastDiscardWasSlap bool
+	lastSlapTarget     *CardRef
+	lastSlapCard       *Card
 	ActionEventID      int
 	InitialPending     map[string]bool
 	Reveal             *privateReveal
@@ -311,6 +313,8 @@ func (g *Game) resetRoundState() {
 	g.Discard = nil
 	g.Drawn = nil
 	g.lastDiscardWasSlap = false
+	g.lastSlapTarget = nil
+	g.lastSlapCard = nil
 	// Both IDs are client-visible event cursors. Keep them monotonic across
 	// rounds so delayed messages from the previous round cannot be mistaken
 	// for the first discard/action of the new round.
@@ -637,28 +641,38 @@ func (g *Game) slap(playerID string, eventID int, target CardRef) error {
 	if g.Phase == PhaseLobby || g.Phase == PhaseInitialPeek || g.Phase == PhaseEnded {
 		return errors.New("slaps are not open")
 	}
-	if len(g.Discard) == 0 || eventID != g.DiscardEventID {
-		card := g.slapTargetCard(target)
-		return g.wrongSlap(playerID, target, card, "that discard is no longer available")
+	if len(g.Discard) == 0 {
+		return g.wrongSlap(playerID, target, nil, "there is no discard to slap")
 	}
-	if g.lastDiscardWasSlap {
-		return g.wrongSlap(playerID, target, g.slapTargetCard(target), "that discard has already been slapped")
+	card := g.slapTargetCard(target)
+	if card == nil {
+		return g.wrongSlap(playerID, target, nil, "that slot is empty")
+	}
+	top := g.Discard[len(g.Discard)-1]
+	if eventID < g.DiscardEventID || (eventID == g.DiscardEventID && g.lastDiscardWasSlap) {
+		if card.Rank == top.Rank {
+			g.recordActionWithCardReason("late_slap", playerID, nil, nil, &target, card, "the slap race was already won")
+			return nil
+		}
+		return g.wrongSlap(playerID, target, card, "ranks do not match")
+	}
+	if eventID != g.DiscardEventID {
+		return g.wrongSlap(playerID, target, card, "that discard is no longer available")
 	}
 	if g.Phase == PhaseAwaitGift {
 		return errors.New("the previous slap gift must be resolved first")
 	}
-	targetPlayer := g.player(target.PlayerID)
-	card, err := occupiedCard(targetPlayer, target.Slot)
-	if err != nil {
-		return g.wrongSlap(playerID, target, nil, "that slot is empty")
-	}
-	top := g.Discard[len(g.Discard)-1]
 	if card.Rank != top.Rank {
 		return g.wrongSlap(playerID, target, card, "ranks do not match")
 	}
+	targetPlayer := g.player(target.PlayerID)
 	targetPlayer.Cards[target.Slot] = nil
 	g.openDiscard(card)
 	g.lastDiscardWasSlap = true
+	targetCopy := target
+	cardCopy := *card
+	g.lastSlapTarget = &targetCopy
+	g.lastSlapCard = &cardCopy
 	g.recordActionWithCard("slap", playerID, nil, nil, &target, card)
 	if target.PlayerID != playerID {
 		g.Gift = &pendingGift{SlapperID: playerID, Target: target, Resume: g.Phase}
@@ -690,8 +704,8 @@ func (g *Game) slapTargetCard(target CardRef) *Card {
 			return card
 		}
 	}
-	if g.Action != nil && g.Action.Kind == "slap" && g.Action.Target != nil && *g.Action.Target == target {
-		return g.Action.Card
+	if g.lastDiscardWasSlap && g.lastSlapTarget != nil && *g.lastSlapTarget == target && g.lastSlapCard != nil {
+		return g.lastSlapCard
 	}
 	return nil
 }
@@ -815,7 +829,7 @@ func (g *Game) end(reason string) {
 		}
 	}
 	sort.Strings(g.WinnerIDs)
-	if g.CalledBy != "" && !containsString(g.WinnerIDs, g.CalledBy) {
+	if g.CalledBy != "" && !g.kaboCallerHasLowestScore() {
 		g.LoserIDs = []string{g.CalledBy}
 		return
 	}
@@ -832,6 +846,22 @@ func (g *Game) end(reason string) {
 		}
 	}
 	sort.Strings(g.LoserIDs)
+}
+
+// A Kabo call succeeds when nobody else has a strictly lower score. Tied
+// lowest scores are therefore successful calls for every tied player.
+func (g *Game) kaboCallerHasLowestScore() bool {
+	caller := g.player(g.CalledBy)
+	if caller == nil {
+		return false
+	}
+	callerScore := playerScore(caller)
+	for _, player := range g.Players {
+		if player.ID != caller.ID && playerScore(player) < callerScore {
+			return false
+		}
+	}
+	return true
 }
 
 func containsString(values []string, target string) bool {
@@ -1066,6 +1096,8 @@ func (g *Game) openDiscard(card *Card) {
 	g.Discard = append(g.Discard, *card)
 	g.DiscardEventID++
 	g.lastDiscardWasSlap = false
+	g.lastSlapTarget = nil
+	g.lastSlapCard = nil
 }
 
 func (g *Game) takeDeckCard() (*Card, bool) {

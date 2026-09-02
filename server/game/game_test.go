@@ -267,6 +267,34 @@ func TestRoundResultMarksFailedKaboCaller(t *testing.T) {
 	}
 }
 
+func TestTiedLowestKaboCallerSucceeds(t *testing.T) {
+	g := startedGame(t)
+	g.player("a").Cards = []*Card{{ID: "a4", Rank: 4, Suit: Clubs}}
+	g.player("b").Cards = []*Card{{ID: "b4", Rank: 4, Suit: Spades}}
+	g.Current = 1
+	g.Phase = PhaseAwaitDraw
+
+	if err := g.Apply("b", ClientMessage{Type: "call_end"}); err != nil {
+		t.Fatal(err)
+	}
+	result := g.Result()
+	if result == nil {
+		t.Fatal("Kabo call did not end the round")
+	}
+	for _, player := range result.Players {
+		switch player.ID {
+		case "a":
+			if !player.Winner || player.CalledKabo || player.KaboFailed {
+				t.Fatalf("Ada result = %+v", player)
+			}
+		case "b":
+			if !player.Winner || !player.CalledKabo || player.KaboFailed {
+				t.Fatalf("tied Kabo caller result = %+v", player)
+			}
+		}
+	}
+}
+
 func TestRoundResultIncludesRoomMetadataAndEventHistory(t *testing.T) {
 	g := NewWithMetadata("room", rand.New(rand.NewSource(13)), RoomMetadata{
 		Platform:      "discord",
@@ -408,7 +436,7 @@ func TestSlapPenaltyAndOpponentGift(t *testing.T) {
 	}
 }
 
-func TestLateSlapIsPenalizedAndRevealsTheAcceptedCard(t *testing.T) {
+func TestLateSlapRevealsWithoutPenalty(t *testing.T) {
 	g := startedGame(t)
 	five := Card{ID: "late-five", Rank: 5, Suit: Hearts}
 	g.Discard = []Card{{ID: "discard-five", Rank: 5, Suit: Clubs}}
@@ -419,19 +447,17 @@ func TestLateSlapIsPenalizedAndRevealsTheAcceptedCard(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := countCards(g.player("a"))
+	deckBefore := len(g.Deck)
 	late := g.Apply("a", ClientMessage{Type: "slap", EventID: 4, Target: CardRef{PlayerID: "a", Slot: 0}})
-	if late == nil {
-		t.Fatal("a stale slap should be penalized")
+	if late != nil {
+		t.Fatalf("a late correct slap should not be an error: %v", late)
 	}
-	if coded, ok := late.(interface{ ErrorCode() string }); !ok || coded.ErrorCode() != "wrong_slap" {
-		t.Fatalf("late slap should use the wrong-slap error code: %T %v", late, late)
-	}
-	if countCards(g.player("a")) != before+1 {
-		t.Fatal("late slap should add a penalty card")
+	if countCards(g.player("a")) != before || len(g.Deck) != deckBefore {
+		t.Fatalf("late slap should not change hand or deck: hand=%d/%d deck=%d/%d", countCards(g.player("a")), before, len(g.Deck), deckBefore)
 	}
 	action := g.View("b").Action
-	if action == nil || action.Kind != "wrong_slap" || action.ActorID != "a" || action.Card == nil || action.Card.ID != five.ID {
-		t.Fatalf("late slap should broadcast the accepted card: %+v", action)
+	if action == nil || action.Kind != "late_slap" || action.ActorID != "a" || action.Card == nil || action.Card.ID != five.ID {
+		t.Fatalf("late slap should broadcast the revealed card: %+v", action)
 	}
 }
 
@@ -450,27 +476,28 @@ func TestOnlyTheFirstCorrectSlapWinsForADiscard(t *testing.T) {
 	}
 
 	before := countCards(g.player("b"))
+	deckBefore := len(g.Deck)
 	late := g.Apply("b", ClientMessage{Type: "slap", EventID: g.DiscardEventID, Target: CardRef{PlayerID: "b", Slot: 0}})
-	if late == nil {
-		t.Fatal("a second correct slap against the slapped top should be penalized")
+	if late != nil {
+		t.Fatalf("a second correct slap should be late without an error: %v", late)
 	}
-	if coded, ok := late.(interface{ ErrorCode() string }); !ok || coded.ErrorCode() != "wrong_slap" {
-		t.Fatalf("second slap should use the wrong-slap error code: %T %v", late, late)
-	}
-	if countCards(g.player("b")) != before+1 {
-		t.Fatalf("second slap should add one penalty card: before=%d after=%d", before, countCards(g.player("b")))
+	if countCards(g.player("b")) != before || len(g.Deck) != deckBefore {
+		t.Fatalf("second correct slap should not add a penalty: hand=%d/%d deck=%d/%d", countCards(g.player("b")), before, len(g.Deck), deckBefore)
 	}
 	if g.player("b").Cards[0] == nil || g.Discard[len(g.Discard)-1].ID != "a-five" {
-		t.Fatal("a penalized second slap should not move another card onto the discard pile")
+		t.Fatal("a late second slap should not move another card onto the discard pile")
+	}
+	if action := g.View("a").Action; action == nil || action.Kind != "late_slap" || action.ActorID != "b" || action.Card == nil || action.Card.ID != "b-five" {
+		t.Fatalf("late second slap should reveal its attempted card: %+v", action)
 	}
 }
 
-func TestSlapAfterAnOpponentSlapIsPenalizedBeforeGiftResolution(t *testing.T) {
+func TestWrongSlapAfterAnOpponentSlapIsPenalizedBeforeGiftResolution(t *testing.T) {
 	g := startedGame(t)
 	g.Discard = []Card{{ID: "discard-five", Rank: 5, Suit: Clubs}}
 	g.DiscardEventID = 4
 	g.player("a").Cards[0] = &Card{ID: "a-five", Rank: 5, Suit: Hearts}
-	g.player("a").Cards[1] = &Card{ID: "a-second-five", Rank: 5, Suit: Diamonds}
+	g.player("a").Cards[1] = &Card{ID: "a-six", Rank: 6, Suit: Diamonds}
 
 	if err := g.Apply("b", ClientMessage{Type: "slap", EventID: 4, Target: CardRef{PlayerID: "a", Slot: 0}}); err != nil {
 		t.Fatal(err)
@@ -482,10 +509,10 @@ func TestSlapAfterAnOpponentSlapIsPenalizedBeforeGiftResolution(t *testing.T) {
 	before := countCards(g.player("a"))
 	late := g.Apply("a", ClientMessage{Type: "slap", EventID: g.DiscardEventID, Target: CardRef{PlayerID: "a", Slot: 1}})
 	if late == nil {
-		t.Fatal("a slap during the closed opponent-slap race should be penalized")
+		t.Fatal("a wrong slap during the closed opponent-slap race should be penalized")
 	}
 	if coded, ok := late.(interface{ ErrorCode() string }); !ok || coded.ErrorCode() != "wrong_slap" {
-		t.Fatalf("slap during gift resolution should use the wrong-slap error code: %T %v", late, late)
+		t.Fatalf("wrong slap during gift resolution should use the wrong-slap error code: %T %v", late, late)
 	}
 	if countCards(g.player("a")) != before+1 {
 		t.Fatalf("slap during gift resolution should add one penalty card: before=%d after=%d", before, countCards(g.player("a")))

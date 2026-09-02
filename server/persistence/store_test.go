@@ -109,6 +109,59 @@ func TestRecordRoundIsIdempotentAndStoresPlayers(t *testing.T) {
 	}
 }
 
+func TestLeaderboardIsGuildScopedAndRanksByCumulativePoints(t *testing.T) {
+	store, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	results := []game.RoundResult{
+		{
+			RoomID: "guild-a-room", Platform: "discord", GuildID: "guild-a", Round: 1,
+			StartedAt: time.Unix(10, 0), EndedAt: time.Unix(20, 0), EndReason: "called_end",
+			Players: []game.PlayerResult{
+				{ID: "a", Name: "Ada", Score: 4, Winner: true},
+				{ID: "b", Name: "Ben", Score: 3},
+			},
+		},
+		{
+			RoomID: "guild-a-room", Platform: "discord", GuildID: "guild-a", Round: 2,
+			StartedAt: time.Unix(30, 0), EndedAt: time.Unix(40, 0), EndReason: "called_end",
+			Players: []game.PlayerResult{
+				{ID: "a", Name: "Ada Updated", Score: 3},
+				{ID: "b", Name: "Ben", Score: 1, Winner: true},
+			},
+		},
+		{
+			RoomID: "guild-b-room", Platform: "discord", GuildID: "guild-b", Round: 1,
+			StartedAt: time.Unix(50, 0), EndedAt: time.Unix(60, 0), EndReason: "called_end",
+			Players: []game.PlayerResult{
+				{ID: "a", Name: "Ada Other Server", Score: 0, Winner: true},
+			},
+		},
+	}
+	for _, result := range results {
+		if err := store.RecordRound(result); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	entries, err := store.Leaderboard("guild-a", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("leaderboard returned %d players, want 2", len(entries))
+	}
+	if entries[0].PlayerID != "b" || entries[0].DisplayName != "Ben" || entries[0].Games != 2 || entries[0].Wins != 1 || entries[0].TotalScore != 4 {
+		t.Fatalf("first leaderboard entry = %+v, want Ben with 4 points", entries[0])
+	}
+	if entries[1].PlayerID != "a" || entries[1].DisplayName != "Ada Updated" || entries[1].Games != 2 || entries[1].Wins != 1 || entries[1].TotalScore != 7 {
+		t.Fatalf("second leaderboard entry = %+v, want Ada Updated with 7 points", entries[1])
+	}
+}
+
 func TestOpenMigratesLegacyRoundTables(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "legacy.sqlite")
 	db, err := sql.Open("sqlite", path)

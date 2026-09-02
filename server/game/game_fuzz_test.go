@@ -47,8 +47,8 @@ func seedRapidSlap(g *Game, data []byte) {
 	g.Lock()
 
 	// Put two occupied matching targets in front of one shared discard. All
-	// requests below use the same event cursor, so exactly one can win; the
-	// others must become stale/wrong slaps and may only add penalties.
+	// requests below use the same event cursor, so exactly one can win; later
+	// correct requests are late reveals, while wrong requests may add penalties.
 	g.Phase = PhaseAwaitDraw
 	g.Current = 0
 	g.ActorID = ""

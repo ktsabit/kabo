@@ -66,7 +66,7 @@ export interface PublicPeekView {
 
 export interface ActionView {
   id: number;
-  kind: "swap" | "replace" | "discard" | "slap" | "wrong_slap" | "gift";
+  kind: "swap" | "replace" | "discard" | "slap" | "late_slap" | "wrong_slap" | "gift";
   actorId: string;
   first?: CardRef;
   second?: CardRef;

@@ -14,12 +14,15 @@ services:
       DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
       DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
       DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+      DISCORD_PUBLIC_KEY: ${DISCORD_PUBLIC_KEY:-}
+      DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:-}
+      DISCORD_REGISTER_COMMANDS: ${DISCORD_REGISTER_COMMANDS:-false}
       ALLOW_GUESTS: ${ALLOW_GUESTS:-false}
       DB_PATH: ${DB_PATH:-/data/kabo.sqlite}
       KABO_TURN_TIMEOUT: ${KABO_TURN_TIMEOUT:-15s}
       KABO_REVEAL_TIMEOUT: ${KABO_REVEAL_TIMEOUT:-3s}
     volumes:
-      - kabo-data:/data
+      - ./data:/data
     restart: unless-stopped
     init: true
     healthcheck:
@@ -37,7 +40,3 @@ services:
 networks:
   pangolin:
     external: true
-
-volumes:
-  kabo-data:
-    

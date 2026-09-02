@@ -67,7 +67,7 @@ function actionAnimate(element: Element, keyframes: Keyframe[] | PropertyIndexed
 function cancelActionAnimations() {
   [...activeActionAnimations].forEach((animation) => animation.cancel());
   activeActionAnimations.clear();
-  document.querySelectorAll(".action-card-ghost, .action-card-static, .wrong-slap-flight, .slap-flash")
+  document.querySelectorAll(".action-card-ghost, .action-card-static, .wrong-slap-flight, .late-slap-flight, .slap-flash")
     .forEach((element) => element.remove());
 }
 
@@ -924,6 +924,8 @@ async function animateAction(action: ActionView, geometry: ActionGeometry): Prom
   switch (action.kind) {
     case "wrong_slap":
       return animateWrongSlap(action, geometry);
+    case "late_slap":
+      return animateSlapReveal(action, geometry, false);
     case "swap":
       if (geometry.first && geometry.second && action.first && action.second) {
         return animateSwap(action.first, action.second, geometry.first, geometry.second);
@@ -1052,19 +1054,23 @@ function clearHandCompaction() {
 }
 
 function animateWrongSlap(action: ActionView, geometry: ActionGeometry): Promise<void> {
+  return animateSlapReveal(action, geometry, true);
+}
+
+function animateSlapReveal(action: ActionView, geometry: ActionGeometry, penalized: boolean): Promise<void> {
   if (!action.target || !action.card) {
-    return animateWrongSlapShake(action.actorId);
+    return penalized ? animateWrongSlapShake(action.actorId) : Promise.resolve();
   }
   const discard = document.querySelector<HTMLElement>(".discard-wrap");
   const source = slotFor(action.target);
   if (!discard || (!geometry.target && !source)) {
-    return animateWrongSlapShake(action.actorId);
+    return penalized ? animateWrongSlapShake(action.actorId) : Promise.resolve();
   }
 
   const sourceCard = source?.querySelector<HTMLElement>(".playing-card, .card-back, .empty-slot");
   const from = geometry.target?.rect ?? sourceCard?.getBoundingClientRect() ?? source?.getBoundingClientRect();
   if (!from) {
-    return animateWrongSlapShake(action.actorId);
+    return penalized ? animateWrongSlapShake(action.actorId) : Promise.resolve();
   }
   const discardRect = discard.getBoundingClientRect();
   const width = from.width || 70;
@@ -1078,7 +1084,7 @@ function animateWrongSlap(action: ActionView, geometry: ActionGeometry): Promise
       : Math.min(window.innerWidth - width - 8, discardRect.left + 14);
   const finalTop = Math.max(8, Math.min(window.innerHeight - height - 8, discardRect.top + 10));
   const ghost = document.createElement("div");
-  ghost.className = "wrong-slap-flight";
+  ghost.className = penalized ? "wrong-slap-flight" : "late-slap-flight";
   Object.assign(ghost.style, {
     left: `${from.left}px`,
     top: `${from.top}px`,
@@ -1112,7 +1118,7 @@ function animateWrongSlap(action: ActionView, geometry: ActionGeometry): Promise
       if (shake) void animateWrongSlapShake(action.actorId).then(resolve);
       else resolve();
     };
-    const finishWithShake = () => finish(true);
+    const finishWithShake = () => finish(penalized);
     const cancel = () => finish(false);
     animation.addEventListener("finish", finishWithShake, { once: true });
     animation.addEventListener("cancel", cancel, { once: true });
@@ -1353,6 +1359,8 @@ function holdActionVisuals(action: ActionView, activePlayerID?: string): () => v
       if (action.second) elements.push(liveCardElement(action.second));
       break;
     case "wrong_slap":
+      break;
+    case "late_slap":
       break;
   }
   const releaseElements = hideElements(elements);
