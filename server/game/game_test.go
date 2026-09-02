@@ -297,14 +297,15 @@ func TestTiedLowestKaboCallerSucceeds(t *testing.T) {
 
 func TestRoundResultIncludesRoomMetadataAndEventHistory(t *testing.T) {
 	g := NewWithMetadata("room", rand.New(rand.NewSource(13)), RoomMetadata{
-		Platform:      "discord",
-		ApplicationID: "app-123",
-		InstanceID:    "instance-123",
-		GuildID:       "guild-123",
-		ChannelID:     "channel-123",
-		LocationID:    "guild",
-		CustomID:      "launch",
-		ReferrerID:    "referrer",
+		Platform:       "discord",
+		ClientPlatform: "desktop",
+		ApplicationID:  "app-123",
+		InstanceID:     "instance-123",
+		GuildID:        "guild-123",
+		ChannelID:      "channel-123",
+		LocationID:     "guild",
+		CustomID:       "launch",
+		ReferrerID:     "referrer",
 	})
 	_, _ = g.AddOrReconnect("a", "Ada")
 	_, _ = g.AddOrReconnect("b", "Ben")
@@ -327,7 +328,7 @@ func TestRoundResultIncludesRoomMetadataAndEventHistory(t *testing.T) {
 	if result == nil {
 		t.Fatal("ended game should produce a round result")
 	}
-	if result.Platform != "discord" || result.ApplicationID != "app-123" || result.InstanceID != "instance-123" || result.GuildID != "guild-123" || result.ChannelID != "channel-123" || result.LocationID != "guild" || result.CustomID != "launch" || result.ReferrerID != "referrer" {
+	if result.Platform != "discord" || result.ClientPlatform != "desktop" || result.ApplicationID != "app-123" || result.InstanceID != "instance-123" || result.GuildID != "guild-123" || result.ChannelID != "channel-123" || result.LocationID != "guild" || result.CustomID != "launch" || result.ReferrerID != "referrer" {
 		t.Fatalf("round metadata was not copied into the result: %+v", result)
 	}
 	if len(result.Events) != 2 || result.Events[0].Kind != "start_game" || result.Events[0].ActorID != "a" || result.Events[1].Kind != "draw" || result.Events[1].ActorID != "a" || result.Events[1].Card == nil {

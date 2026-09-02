@@ -17,11 +17,13 @@ type Store struct {
 }
 
 type LeaderboardEntry struct {
-	PlayerID    string
-	DisplayName string
-	Games       int
-	Wins        int
-	TotalScore  int
+	PlayerID     string
+	DisplayName  string
+	Games        int
+	Wins         int
+	TotalScore   int
+	AverageScore float64
+	WinRate      float64
 }
 
 func Open(path string) (*Store, error) {
@@ -103,13 +105,14 @@ func (s *Store) RecordRound(result game.RoundResult) error {
 	}
 	_, err = tx.Exec(`
 		INSERT INTO rounds (
-			room_id, platform, application_id, instance_id, guild_id, channel_id,
+			room_id, platform, client_platform, application_id, instance_id, guild_id, channel_id,
 			location_id, custom_id, referrer_id, round_number, player_count,
 			event_count, started_at, ended_at, duration_ms, end_reason, called_by
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (room_id, round_number) DO UPDATE SET
 			platform = excluded.platform,
+			client_platform = excluded.client_platform,
 			application_id = excluded.application_id,
 			instance_id = excluded.instance_id,
 			guild_id = excluded.guild_id,
@@ -124,7 +127,7 @@ func (s *Store) RecordRound(result game.RoundResult) error {
 			duration_ms = excluded.duration_ms,
 			end_reason = excluded.end_reason,
 			called_by = excluded.called_by
-	`, result.RoomID, result.Platform, result.ApplicationID, instanceID, result.GuildID, result.ChannelID,
+	`, result.RoomID, result.Platform, result.ClientPlatform, result.ApplicationID, instanceID, result.GuildID, result.ChannelID,
 		result.LocationID, result.CustomID, result.ReferrerID, result.Round, len(result.Players), len(result.Events),
 		timestamp(result.StartedAt), timestamp(result.EndedAt), durationMS, result.EndReason, result.CalledBy)
 	if err != nil {
@@ -211,7 +214,10 @@ func (s *Store) Leaderboard(guildID string, limit int) ([]LeaderboardEntry, erro
 			WHERE r.platform = 'discord' AND r.guild_id = ?
 			GROUP BY rp.player_id
 		) stats
-		ORDER BY stats.total_score ASC, stats.wins DESC, stats.games DESC,
+		ORDER BY stats.wins DESC,
+			(stats.wins * 1.0 / stats.games) DESC,
+			(stats.total_score * 1.0 / stats.games) ASC,
+			stats.games DESC,
 			COALESCE(display_name, stats.player_id) COLLATE NOCASE ASC
 		LIMIT ?
 	`, guildID, guildID, limit)
@@ -229,6 +235,8 @@ func (s *Store) Leaderboard(guildID string, limit int) ([]LeaderboardEntry, erro
 		if entry.DisplayName == "" {
 			entry.DisplayName = entry.PlayerID
 		}
+		entry.AverageScore = float64(entry.TotalScore) / float64(entry.Games)
+		entry.WinRate = 100 * float64(entry.Wins) / float64(entry.Games)
 		entries = append(entries, entry)
 	}
 	if err := rows.Err(); err != nil {
@@ -291,6 +299,7 @@ CREATE TABLE IF NOT EXISTS rounds (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     room_id TEXT NOT NULL,
     platform TEXT NOT NULL DEFAULT '',
+    client_platform TEXT NOT NULL DEFAULT '',
     application_id TEXT NOT NULL DEFAULT '',
     instance_id TEXT NOT NULL DEFAULT '',
     guild_id TEXT NOT NULL DEFAULT '',
@@ -360,6 +369,7 @@ func ensureRoundPlayerColumns(db *sql.DB) error {
 func ensureRoundColumns(db *sql.DB) error {
 	if err := ensureTableColumns(db, "rounds", []tableColumn{
 		{name: "platform", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "client_platform", definition: "TEXT NOT NULL DEFAULT ''"},
 		{name: "application_id", definition: "TEXT NOT NULL DEFAULT ''"},
 		{name: "instance_id", definition: "TEXT NOT NULL DEFAULT ''"},
 		{name: "guild_id", definition: "TEXT NOT NULL DEFAULT ''"},
@@ -374,6 +384,21 @@ func ensureRoundColumns(db *sql.DB) error {
 		return err
 	}
 	if _, err := db.Exec(`UPDATE rounds SET instance_id = room_id WHERE instance_id = ''`); err != nil {
+		return err
+	}
+	// Earlier builds stored DiscordSDK.platform ("desktop"/"mobile") as the
+	// round source. Preserve that detail separately and restore the source so
+	// existing Activity rounds appear in guild leaderboards.
+	if _, err := db.Exec(`
+		UPDATE rounds
+		SET client_platform = CASE
+				WHEN client_platform = '' THEN platform
+				ELSE client_platform
+			END,
+			platform = 'discord'
+		WHERE application_id <> ''
+			AND platform NOT IN ('', 'browser', 'discord')
+	`); err != nil {
 		return err
 	}
 	_, err := db.Exec(`

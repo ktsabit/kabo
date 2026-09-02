@@ -171,20 +171,19 @@ func (s *server) handleToken(w http.ResponseWriter, r *http.Request) {
 		lifetime = time.Duration(token.ExpiresIn) * time.Second
 	}
 
-	// Identity is intentionally a value here; Sessions.CreateWithMetadata expects auth.Identity.
-	platform := body.Platform
-	if platform == "" {
-		platform = "discord"
-	}
+	// An authenticated Embedded App session is always a Discord session. The
+	// SDK's platform value describes the Discord client (desktop/mobile), not
+	// the source of the round.
 	sessionID, err := s.sessions.CreateWithMetadata(*identity, body.InstanceID, auth.SessionMetadata{
-		Platform:      platform,
-		ApplicationID: s.discord.ClientID,
-		InstanceID:    body.InstanceID,
-		GuildID:       body.GuildID,
-		ChannelID:     body.ChannelID,
-		LocationID:    body.LocationID,
-		CustomID:      body.CustomID,
-		ReferrerID:    body.ReferrerID,
+		Platform:       "discord",
+		ClientPlatform: body.Platform,
+		ApplicationID:  s.discord.ClientID,
+		InstanceID:     body.InstanceID,
+		GuildID:        body.GuildID,
+		ChannelID:      body.ChannelID,
+		LocationID:     body.LocationID,
+		CustomID:       body.CustomID,
+		ReferrerID:     body.ReferrerID,
 	}, lifetime)
 	if err != nil {
 		http.Error(w, "could not create game session", http.StatusInternalServerError)
@@ -215,14 +214,15 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		var sessionMetadata auth.SessionMetadata
 		identity, sessionMetadata, err = s.sessions.ResolveWithMetadata(sessionID, roomID)
 		roomMetadata = game.RoomMetadata{
-			Platform:      sessionMetadata.Platform,
-			ApplicationID: sessionMetadata.ApplicationID,
-			InstanceID:    sessionMetadata.InstanceID,
-			GuildID:       sessionMetadata.GuildID,
-			ChannelID:     sessionMetadata.ChannelID,
-			LocationID:    sessionMetadata.LocationID,
-			CustomID:      sessionMetadata.CustomID,
-			ReferrerID:    sessionMetadata.ReferrerID,
+			Platform:       sessionMetadata.Platform,
+			ClientPlatform: sessionMetadata.ClientPlatform,
+			ApplicationID:  sessionMetadata.ApplicationID,
+			InstanceID:     sessionMetadata.InstanceID,
+			GuildID:        sessionMetadata.GuildID,
+			ChannelID:      sessionMetadata.ChannelID,
+			LocationID:     sessionMetadata.LocationID,
+			CustomID:       sessionMetadata.CustomID,
+			ReferrerID:     sessionMetadata.ReferrerID,
 		}
 	} else if s.allowGuests {
 		identity = auth.Identity{

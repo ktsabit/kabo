@@ -68,6 +68,7 @@ type Game struct {
 
 	ID                 string
 	Platform           string
+	ClientPlatform     string
 	ApplicationID      string
 	InstanceID         string
 	GuildID            string
@@ -136,6 +137,7 @@ func (g *Game) SetRoomMetadata(metadata RoomMetadata) {
 		}
 	}
 	setIfEmpty(&g.ApplicationID, metadata.ApplicationID)
+	setIfEmpty(&g.ClientPlatform, metadata.ClientPlatform)
 	if metadata.InstanceID != "" {
 		g.InstanceID = metadata.InstanceID
 	}

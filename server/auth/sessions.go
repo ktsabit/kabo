@@ -14,14 +14,15 @@ type Identity struct {
 }
 
 type SessionMetadata struct {
-	Platform      string
-	ApplicationID string
-	InstanceID    string
-	GuildID       string
-	ChannelID     string
-	LocationID    string
-	CustomID      string
-	ReferrerID    string
+	Platform       string
+	ClientPlatform string
+	ApplicationID  string
+	InstanceID     string
+	GuildID        string
+	ChannelID      string
+	LocationID     string
+	CustomID       string
+	ReferrerID     string
 }
 
 type session struct {

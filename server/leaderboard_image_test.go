@@ -32,8 +32,22 @@ func TestRenderLeaderboardPNGProducesCardForTopTen(t *testing.T) {
 	if image.Bounds().Dx() != leaderboardImageWidth {
 		t.Fatalf("rendered width = %d, want %d", image.Bounds().Dx(), leaderboardImageWidth)
 	}
-	wantHeight := leaderboardRowStart + 42 + 7*(leaderboardRowHeight+leaderboardRowGap)
+	wantHeight := leaderboardImageHeight(len(entries))
 	if image.Bounds().Dy() != wantHeight {
 		t.Fatalf("rendered height = %d, want %d", image.Bounds().Dy(), wantHeight)
+	}
+}
+
+func TestRenderLeaderboardPNGProducesDesignedEmptyState(t *testing.T) {
+	data, err := renderLeaderboardPNG("Kabo Test Server", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	image, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if image.Bounds().Dx() != leaderboardImageWidth || image.Bounds().Dy() != leaderboardImageHeight(0) {
+		t.Fatalf("empty state bounds = %v", image.Bounds())
 	}
 }

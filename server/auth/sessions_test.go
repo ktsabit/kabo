@@ -8,14 +8,15 @@ import (
 func TestSessionMetadataRoundTripsWithIdentity(t *testing.T) {
 	sessions := NewSessions()
 	want := SessionMetadata{
-		Platform:      "desktop",
-		ApplicationID: "app-123",
-		InstanceID:    "instance-123",
-		GuildID:       "guild-123",
-		ChannelID:     "channel-123",
-		LocationID:    "guild",
-		CustomID:      "launch",
-		ReferrerID:    "referrer",
+		Platform:       "discord",
+		ClientPlatform: "desktop",
+		ApplicationID:  "app-123",
+		InstanceID:     "instance-123",
+		GuildID:        "guild-123",
+		ChannelID:      "channel-123",
+		LocationID:     "guild",
+		CustomID:       "launch",
+		ReferrerID:     "referrer",
 	}
 	id, err := sessions.CreateWithMetadata(Identity{ID: "user-123", Name: "Ada"}, "instance-123", want, time.Minute)
 	if err != nil {

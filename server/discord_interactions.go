@@ -203,7 +203,7 @@ func (s *server) completeLeaderboard(interaction discordInteraction) {
 
 	serverName := interaction.Guild.Name
 	if serverName == "" {
-		serverName = "Discord server"
+		serverName = "This server"
 	}
 	image, err := renderLeaderboardPNG(serverName, entries, s.fetchLeaderboardAvatars(entries))
 	if err != nil {
@@ -225,16 +225,16 @@ func (s *server) completeLeaderboard(interaction discordInteraction) {
 
 func renderLeaderboardEmbed(entries []persistence.LeaderboardEntry, imageURL string) discordEmbed {
 	embed := discordEmbed{
-		Title:       "Kabo Leaderboard",
-		Description: "Cumulative points · lower is better",
+		Title:       "Kabo · All-Time Standings",
+		Description: "Ranked by total round wins · higher is better",
 		Color:       0x3039B9,
-		Footer:      &discordEmbedFooter{Text: "Kabo · /leaderboard"},
+		Footer:      &discordEmbedFooter{Text: "Kabo · win rounds, climb the table"},
 	}
 	if imageURL != "" {
 		embed.Image = &discordEmbedImage{URL: imageURL}
 	}
 	if len(entries) == 0 {
-		embed.Description = "No completed Kabo rounds have been recorded in this server yet."
+		embed.Description = "The table is open—finish a Discord Activity round in this server to place the first score."
 		return embed
 	}
 	if imageURL != "" {
@@ -254,7 +254,7 @@ func renderLeaderboardEmbed(entries []persistence.LeaderboardEntry, imageURL str
 		}
 		embed.Fields = append(embed.Fields, discordEmbedField{
 			Name:   fmt.Sprintf("%s  %s", rank, escapeDiscordText(entry.DisplayName)),
-			Value:  fmt.Sprintf("**%d pts** · %d wins · %d games", entry.TotalScore, entry.Wins, entry.Games),
+			Value:  fmt.Sprintf("**%d wins** · %.0f%% win rate · %d rounds", entry.Wins, entry.WinRate, entry.Games),
 			Inline: false,
 		})
 	}
@@ -263,11 +263,11 @@ func renderLeaderboardEmbed(entries []persistence.LeaderboardEntry, imageURL str
 
 func renderLeaderboardFallback(entries []persistence.LeaderboardEntry) string {
 	if len(entries) == 0 {
-		return "No completed Kabo rounds have been recorded in this server yet."
+		return "The table is open—finish a Discord Activity round in this server to place the first score."
 	}
 	var builder strings.Builder
 	for index, entry := range entries {
-		fmt.Fprintf(&builder, "%d. %s — %d pts · %d wins · %d games\n", index+1, escapeDiscordText(entry.DisplayName), entry.TotalScore, entry.Wins, entry.Games)
+		fmt.Fprintf(&builder, "%d. %s — %d wins · %.0f%% win rate · %d rounds\n", index+1, escapeDiscordText(entry.DisplayName), entry.Wins, entry.WinRate, entry.Games)
 	}
 	return strings.TrimSuffix(builder.String(), "\n")
 }

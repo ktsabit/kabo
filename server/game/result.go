@@ -16,14 +16,15 @@ type PlayerResult struct {
 }
 
 type RoomMetadata struct {
-	Platform      string
-	ApplicationID string
-	InstanceID    string
-	GuildID       string
-	ChannelID     string
-	LocationID    string
-	CustomID      string
-	ReferrerID    string
+	Platform       string
+	ClientPlatform string
+	ApplicationID  string
+	InstanceID     string
+	GuildID        string
+	ChannelID      string
+	LocationID     string
+	CustomID       string
+	ReferrerID     string
 }
 
 type RoundEvent struct {
@@ -39,22 +40,23 @@ type RoundEvent struct {
 }
 
 type RoundResult struct {
-	RoomID        string
-	Platform      string
-	ApplicationID string
-	InstanceID    string
-	GuildID       string
-	ChannelID     string
-	LocationID    string
-	CustomID      string
-	ReferrerID    string
-	Round         int
-	StartedAt     time.Time
-	EndedAt       time.Time
-	EndReason     string
-	CalledBy      string
-	Players       []PlayerResult
-	Events        []RoundEvent
+	RoomID         string
+	Platform       string
+	ClientPlatform string
+	ApplicationID  string
+	InstanceID     string
+	GuildID        string
+	ChannelID      string
+	LocationID     string
+	CustomID       string
+	ReferrerID     string
+	Round          int
+	StartedAt      time.Time
+	EndedAt        time.Time
+	EndReason      string
+	CalledBy       string
+	Players        []PlayerResult
+	Events         []RoundEvent
 }
 
 func (g *Game) Result() *RoundResult {
@@ -71,22 +73,23 @@ func (g *Game) Result() *RoundResult {
 		losers[id] = true
 	}
 	result := &RoundResult{
-		RoomID:        g.ID,
-		Platform:      g.Platform,
-		ApplicationID: g.ApplicationID,
-		InstanceID:    g.InstanceID,
-		GuildID:       g.GuildID,
-		ChannelID:     g.ChannelID,
-		LocationID:    g.LocationID,
-		CustomID:      g.CustomID,
-		ReferrerID:    g.ReferrerID,
-		Round:         g.RoundNumber,
-		StartedAt:     g.RoundStartedAt,
-		EndedAt:       g.RoundEndedAt,
-		EndReason:     g.EndReason,
-		CalledBy:      g.CalledBy,
-		Players:       make([]PlayerResult, 0, len(g.Players)),
-		Events:        cloneRoundEvents(g.events),
+		RoomID:         g.ID,
+		Platform:       g.Platform,
+		ClientPlatform: g.ClientPlatform,
+		ApplicationID:  g.ApplicationID,
+		InstanceID:     g.InstanceID,
+		GuildID:        g.GuildID,
+		ChannelID:      g.ChannelID,
+		LocationID:     g.LocationID,
+		CustomID:       g.CustomID,
+		ReferrerID:     g.ReferrerID,
+		Round:          g.RoundNumber,
+		StartedAt:      g.RoundStartedAt,
+		EndedAt:        g.RoundEndedAt,
+		EndReason:      g.EndReason,
+		CalledBy:       g.CalledBy,
+		Players:        make([]PlayerResult, 0, len(g.Players)),
+		Events:         cloneRoundEvents(g.events),
 	}
 	for seat, player := range g.Players {
 		calledKabo := player.ID == g.CalledBy

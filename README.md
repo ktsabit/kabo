@@ -19,7 +19,7 @@ A playable, server-authoritative Kabo card game. It runs as a normal web app for
 - Lobby readiness checks for every selected player, with the previous round's winner starting the next round.
 - Configurable server deadlines: 30 seconds for the opening peek, 15 seconds for turn phases, and 3 seconds for reveal acknowledgement by default; a drawn card is discarded automatically when possible, otherwise the turn advances.
 - SQLite audit history with Activity/room metadata (application, instance, guild, channel, location, platform, and launch identifiers), player scores and outcomes, and a chronological per-round event log.
-- An optional Discord `/leaderboard` slash command, ranked by cumulative Kabo points within the current server.
+- An optional Discord `/leaderboard` slash command, ranked by total round wins within the current server.
 - Flowing power/discard indicators, queued slap animations, face-up late/wrong slap flights, and a responsive table shell for narrow or short Discord viewports.
 
 Card faces use the CC0-licensed [`@letele/playing-cards`](https://github.com/letele/playing-cards) SVG deck, based on Adrian Kennard's classic designs. The custom indigo bear artwork remains the card back.
@@ -118,7 +118,7 @@ The server includes a signed HTTP interaction handler at `/api/discord/interacti
 4. In **General Information → Interactions Endpoint URL**, enter `https://YOUR_DOMAIN/api/discord/interactions`.
 5. Install the application in the server with the `applications.commands` scope, then run `/leaderboard` in that server.
 
-The command is public and shows the top ten players as a custom PNG leaderboard card attached to a Discord embed, with medal ranks, wins, and completed games. It is ranked by cumulative points (lower is better). The endpoint verifies Discord's `X-Signature-Ed25519` and `X-Signature-Timestamp` headers before reading any interaction.
+The command is public and shows the top ten players in a custom Kabo standings card attached to a Discord embed. It ranks the server by total round wins, with win rate and completed rounds shown as supporting context. Ties are broken by win rate, then average hand score and rounds played. Older Activity rows that stored the Discord client as `desktop` or `mobile` are migrated automatically to the `discord` round source while retaining the client-platform detail. The endpoint verifies Discord's `X-Signature-Ed25519` and `X-Signature-Timestamp` headers before reading any interaction.
 
 The client follows the official flow: construct `DiscordSDK`, wait for `ready()`, request `identify` and `applications.commands`, exchange the authorization code on `/api/token`, call `authenticate`, and use `sdk.instanceId` as the room key. Inside the proxy it uses `/.proxy/api/token` and `/.proxy/ws`; normal browser mode uses `/api/token` and `/ws`.
 

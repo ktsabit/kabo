@@ -4,7 +4,7 @@ The browser sends JSON action intents over `GET /ws`; the Go server validates ev
 
 Connections identify a room and player with either an authenticated Discord session (`?room=<instanceId>&session=<opaque id>`) or, in guest development mode, `?room=<room>&user=<id>&name=<name>`.
 
-The Discord token exchange receives the Activity's non-secret context (`instanceId`, `guildId`, `channelId`, `locationId`, platform, and launch identifiers) and carries it into the room's SQL audit record. OAuth codes, access tokens, and opaque session IDs are not persisted in the database.
+The Discord token exchange receives the Activity's non-secret context (`instanceId`, `guildId`, `channelId`, `locationId`, client platform, and launch identifiers) and carries it into the room's SQL audit record. The round source is stored as `discord`; the SDK's `desktop`/`mobile` value is stored separately as the client platform. OAuth codes, access tokens, and opaque session IDs are not persisted in the database.
 
 The TypeScript definitions in `protocol.ts` are the canonical browser contract. Matching Go wire structs live in `server/game/protocol.go`. Slaps include `discardEventId`; the first valid request changes that ID atomically, making every later request against the previous discard stale. Discard and action cursors remain monotonic for the lifetime of a room, including across rounds.
 

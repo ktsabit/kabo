@@ -17,20 +17,21 @@ func TestRecordRoundIsIdempotentAndStoresPlayers(t *testing.T) {
 	defer store.Close()
 
 	result := game.RoundResult{
-		RoomID:        "room",
-		Platform:      "discord",
-		ApplicationID: "app-123",
-		InstanceID:    "instance-123",
-		GuildID:       "guild-123",
-		ChannelID:     "channel-123",
-		LocationID:    "guild",
-		CustomID:      "launch",
-		ReferrerID:    "referrer",
-		Round:         3,
-		StartedAt:     time.Unix(10, 0),
-		EndedAt:       time.Unix(20, 0),
-		EndReason:     "called_end",
-		CalledBy:      "b",
+		RoomID:         "room",
+		Platform:       "discord",
+		ClientPlatform: "desktop",
+		ApplicationID:  "app-123",
+		InstanceID:     "instance-123",
+		GuildID:        "guild-123",
+		ChannelID:      "channel-123",
+		LocationID:     "guild",
+		CustomID:       "launch",
+		ReferrerID:     "referrer",
+		Round:          3,
+		StartedAt:      time.Unix(10, 0),
+		EndedAt:        time.Unix(20, 0),
+		EndReason:      "called_end",
+		CalledBy:       "b",
 		Players: []game.PlayerResult{
 			{ID: "a", Name: "Ada", Seat: 0, CardCount: 2, Connected: true, Score: 4, Winner: true},
 			{ID: "b", Name: "Ben", Seat: 1, CardCount: 3, Connected: true, Score: 9, Loser: true, CalledKabo: true, KaboFailed: true},
@@ -75,17 +76,17 @@ func TestRecordRoundIsIdempotentAndStoresPlayers(t *testing.T) {
 		t.Fatalf("failed Kabo result was not stored: loser=%d failed=%d", loser, failed)
 	}
 
-	var platform, applicationID, instanceID, guildID, channelID, locationID, customID, referrerID string
+	var platform, clientPlatform, applicationID, instanceID, guildID, channelID, locationID, customID, referrerID string
 	var playerCount, eventCount, durationMS int64
 	if err := store.db.QueryRow(`
-		SELECT platform, application_id, instance_id, guild_id, channel_id, location_id,
+		SELECT platform, client_platform, application_id, instance_id, guild_id, channel_id, location_id,
 			custom_id, referrer_id, player_count, event_count, duration_ms
 		FROM rounds WHERE room_id = 'room' AND round_number = 3
-	`).Scan(&platform, &applicationID, &instanceID, &guildID, &channelID, &locationID, &customID, &referrerID, &playerCount, &eventCount, &durationMS); err != nil {
+	`).Scan(&platform, &clientPlatform, &applicationID, &instanceID, &guildID, &channelID, &locationID, &customID, &referrerID, &playerCount, &eventCount, &durationMS); err != nil {
 		t.Fatal(err)
 	}
-	if platform != "discord" || applicationID != "app-123" || instanceID != "instance-123" || guildID != "guild-123" || channelID != "channel-123" || locationID != "guild" || customID != "launch" || referrerID != "referrer" || playerCount != 2 || eventCount != 1 || durationMS != 10000 {
-		t.Fatalf("round metadata was not stored: platform=%q app=%q instance=%q guild=%q channel=%q location=%q custom=%q referrer=%q players=%d events=%d duration=%d", platform, applicationID, instanceID, guildID, channelID, locationID, customID, referrerID, playerCount, eventCount, durationMS)
+	if platform != "discord" || clientPlatform != "desktop" || applicationID != "app-123" || instanceID != "instance-123" || guildID != "guild-123" || channelID != "channel-123" || locationID != "guild" || customID != "launch" || referrerID != "referrer" || playerCount != 2 || eventCount != 1 || durationMS != 10000 {
+		t.Fatalf("round metadata was not stored: platform=%q client=%q app=%q instance=%q guild=%q channel=%q location=%q custom=%q referrer=%q players=%d events=%d duration=%d", platform, clientPlatform, applicationID, instanceID, guildID, channelID, locationID, customID, referrerID, playerCount, eventCount, durationMS)
 	}
 
 	var seat, cardCount, connected int
@@ -109,7 +110,7 @@ func TestRecordRoundIsIdempotentAndStoresPlayers(t *testing.T) {
 	}
 }
 
-func TestLeaderboardIsGuildScopedAndRanksByCumulativePoints(t *testing.T) {
+func TestLeaderboardIsGuildScopedAndRanksByTotalWins(t *testing.T) {
 	store, err := Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -134,6 +135,14 @@ func TestLeaderboardIsGuildScopedAndRanksByCumulativePoints(t *testing.T) {
 			},
 		},
 		{
+			RoomID: "guild-a-room", Platform: "discord", GuildID: "guild-a", Round: 3,
+			StartedAt: time.Unix(45, 0), EndedAt: time.Unix(46, 0), EndReason: "called_end",
+			Players: []game.PlayerResult{
+				{ID: "a", Name: "Ada Updated", Score: 12, Winner: true},
+				{ID: "b", Name: "Ben", Score: 0},
+			},
+		},
+		{
 			RoomID: "guild-b-room", Platform: "discord", GuildID: "guild-b", Round: 1,
 			StartedAt: time.Unix(50, 0), EndedAt: time.Unix(60, 0), EndReason: "called_end",
 			Players: []game.PlayerResult{
@@ -154,11 +163,52 @@ func TestLeaderboardIsGuildScopedAndRanksByCumulativePoints(t *testing.T) {
 	if len(entries) != 2 {
 		t.Fatalf("leaderboard returned %d players, want 2", len(entries))
 	}
-	if entries[0].PlayerID != "b" || entries[0].DisplayName != "Ben" || entries[0].Games != 2 || entries[0].Wins != 1 || entries[0].TotalScore != 4 {
-		t.Fatalf("first leaderboard entry = %+v, want Ben with 4 points", entries[0])
+	if entries[0].PlayerID != "a" || entries[0].DisplayName != "Ada Updated" || entries[0].Games != 3 || entries[0].Wins != 2 || entries[0].TotalScore != 19 {
+		t.Fatalf("first leaderboard entry = %+v, want Ada with 2 wins despite her higher hand-score total", entries[0])
 	}
-	if entries[1].PlayerID != "a" || entries[1].DisplayName != "Ada Updated" || entries[1].Games != 2 || entries[1].Wins != 1 || entries[1].TotalScore != 7 {
-		t.Fatalf("second leaderboard entry = %+v, want Ada Updated with 7 points", entries[1])
+	if entries[1].PlayerID != "b" || entries[1].DisplayName != "Ben" || entries[1].Games != 3 || entries[1].Wins != 1 || entries[1].TotalScore != 4 {
+		t.Fatalf("second leaderboard entry = %+v, want Ben with 1 win despite his lower hand-score total", entries[1])
+	}
+}
+
+func TestOpenMigratesDiscordClientPlatformForLeaderboard(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "platform-migration.sqlite")
+	store, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordRound(game.RoundResult{
+		RoomID: "activity-room", Platform: "desktop", ApplicationID: "app", GuildID: "guild", Round: 1,
+		StartedAt: time.Unix(10, 0), EndedAt: time.Unix(20, 0), EndReason: "called_end",
+		Players: []game.PlayerResult{{ID: "player", Name: "Player", Score: 4, Winner: true}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	var platform, clientPlatform string
+	if err := store.db.QueryRow(`
+		SELECT platform, client_platform FROM rounds WHERE room_id = 'activity-room'
+	`).Scan(&platform, &clientPlatform); err != nil {
+		t.Fatal(err)
+	}
+	if platform != "discord" || clientPlatform != "desktop" {
+		t.Fatalf("migrated platform = %q client = %q, want discord/desktop", platform, clientPlatform)
+	}
+	entries, err := store.Leaderboard("guild", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].PlayerID != "player" {
+		t.Fatalf("migrated leaderboard = %+v, want saved Activity player", entries)
 	}
 }
 
