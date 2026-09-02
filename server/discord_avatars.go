@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"kabo/server/auth"
 	"kabo/server/persistence"
 )
 
@@ -23,26 +24,37 @@ func (s *server) fetchLeaderboardAvatars(entries []persistence.LeaderboardEntry)
 	if s.discord.BotToken == "" || len(entries) == 0 {
 		return nil
 	}
+	playerIDs := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		playerIDs = append(playerIDs, entry.PlayerID)
+	}
+	return fetchDiscordAvatars(s.discord, playerIDs)
+}
+
+func fetchDiscordAvatars(discord auth.Discord, playerIDs []string) map[string]image.Image {
+	if discord.BotToken == "" || len(playerIDs) == 0 {
+		return nil
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	avatars := make(map[string]image.Image)
 	var avatarsMu sync.Mutex
 	var waitGroup sync.WaitGroup
-	for _, entry := range entries {
-		if entry.PlayerID == "" || !safeID.MatchString(entry.PlayerID) {
+	for _, playerID := range playerIDs {
+		if playerID == "" || !safeID.MatchString(playerID) {
 			continue
 		}
-		entry := entry
+		playerID := playerID
 		waitGroup.Add(1)
 		go func() {
 			defer waitGroup.Done()
-			avatar, err := s.fetchDiscordAvatar(ctx, entry.PlayerID)
+			avatar, err := fetchDiscordAvatar(ctx, discord, playerID)
 			if err != nil || avatar == nil {
 				return
 			}
 			avatarsMu.Lock()
-			avatars[entry.PlayerID] = avatar
+			avatars[playerID] = avatar
 			avatarsMu.Unlock()
 		}()
 	}
@@ -51,7 +63,11 @@ func (s *server) fetchLeaderboardAvatars(entries []persistence.LeaderboardEntry)
 }
 
 func (s *server) fetchDiscordAvatar(ctx context.Context, playerID string) (image.Image, error) {
-	client := s.discord.HTTPClient
+	return fetchDiscordAvatar(ctx, s.discord, playerID)
+}
+
+func fetchDiscordAvatar(ctx context.Context, discord auth.Discord, playerID string) (image.Image, error) {
+	client := discord.HTTPClient
 	if client == nil {
 		client = &http.Client{Timeout: 5 * time.Second}
 	}
@@ -64,7 +80,7 @@ func (s *server) fetchDiscordAvatar(ctx context.Context, playerID string) (image
 	if err != nil {
 		return nil, err
 	}
-	profileRequest.Header.Set("Authorization", "Bot "+s.discord.BotToken)
+	profileRequest.Header.Set("Authorization", "Bot "+discord.BotToken)
 	profileResponse, err := client.Do(profileRequest)
 	if err != nil {
 		return nil, err

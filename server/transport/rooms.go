@@ -49,8 +49,28 @@ func (c TimeoutConfig) normalized() TimeoutConfig {
 }
 
 type ManagerConfig struct {
-	Timeouts TimeoutConfig
-	Results  *persistence.Store
+	Timeouts     TimeoutConfig
+	Results      *persistence.Store
+	OnRoomUpdate func(RoomUpdate)
+}
+
+type RoomPlayer struct {
+	ID        string
+	Name      string
+	Connected bool
+}
+
+type RoomUpdate struct {
+	RoomID        string
+	Platform      string
+	ApplicationID string
+	InstanceID    string
+	GuildID       string
+	ChannelID     string
+	Round         int
+	Phase         game.Phase
+	Players       []RoomPlayer
+	WinnerIDs     []string
 }
 
 type Room struct {
@@ -60,16 +80,18 @@ type Room struct {
 
 	timeouts          TimeoutConfig
 	results           *persistence.Store
+	onRoomUpdate      func(RoomUpdate)
 	timeoutTimer      *time.Timer
 	timeoutKey        string
 	lastRecordedRound int
 }
 
 type Manager struct {
-	mu       sync.Mutex
-	rooms    map[string]*Room
-	timeouts TimeoutConfig
-	results  *persistence.Store
+	mu           sync.Mutex
+	rooms        map[string]*Room
+	timeouts     TimeoutConfig
+	results      *persistence.Store
+	onRoomUpdate func(RoomUpdate)
 }
 
 func NewManager(config ...ManagerConfig) *Manager {
@@ -78,9 +100,10 @@ func NewManager(config ...ManagerConfig) *Manager {
 		settings = config[0]
 	}
 	return &Manager{
-		rooms:    map[string]*Room{},
-		timeouts: settings.Timeouts.normalized(),
-		results:  settings.Results,
+		rooms:        map[string]*Room{},
+		timeouts:     settings.Timeouts.normalized(),
+		results:      settings.Results,
+		onRoomUpdate: settings.OnRoomUpdate,
 	}
 }
 
@@ -93,10 +116,11 @@ func (m *Manager) JoinWithMetadata(roomID, playerID, name string, metadata game.
 	room := m.rooms[roomID]
 	if room == nil {
 		room = &Room{
-			game:     game.NewWithMetadata(roomID, rand.New(rand.NewSource(rand.Int63())), metadata),
-			clients:  map[string]*Client{},
-			timeouts: m.timeouts,
-			results:  m.results,
+			game:         game.NewWithMetadata(roomID, rand.New(rand.NewSource(rand.Int63())), metadata),
+			clients:      map[string]*Client{},
+			timeouts:     m.timeouts,
+			results:      m.results,
+			onRoomUpdate: m.onRoomUpdate,
 		}
 		m.rooms[roomID] = room
 	}
@@ -118,6 +142,7 @@ func (m *Manager) JoinWithMetadata(roomID, playerID, name string, metadata game.
 	room.clients[playerID] = client
 	room.broadcastLocked()
 	room.scheduleTimeoutLocked()
+	room.publishUpdateLocked()
 	room.mu.Unlock()
 	return client, nil
 }
@@ -158,6 +183,7 @@ func (c *Client) Run() {
 		c.room.recordResultLocked()
 		c.room.scheduleTimeoutLocked()
 		c.room.broadcastLocked()
+		c.room.publishUpdateLocked()
 		c.room.mu.Unlock()
 	}
 
@@ -184,6 +210,7 @@ func (r *Room) remove(client *Client) {
 		r.broadcastLocked()
 		r.scheduleTimeoutLocked()
 	}
+	r.publishUpdateLocked()
 	r.mu.Unlock()
 }
 
@@ -270,6 +297,39 @@ func (r *Room) fireTimeout(key string) {
 	r.recordResultLocked()
 	r.scheduleTimeoutLocked()
 	r.broadcastLocked()
+	r.publishUpdateLocked()
+}
+
+func (r *Room) publishUpdateLocked() {
+	if r.onRoomUpdate == nil {
+		return
+	}
+	r.game.Lock()
+	update := RoomUpdate{
+		RoomID:        r.game.ID,
+		Platform:      r.game.Platform,
+		ApplicationID: r.game.ApplicationID,
+		InstanceID:    r.game.InstanceID,
+		GuildID:       r.game.GuildID,
+		ChannelID:     r.game.ChannelID,
+		Round:         r.game.RoundNumber,
+		Phase:         r.game.Phase,
+		Players:       make([]RoomPlayer, 0, len(r.game.Players)+len(r.game.Waiting)),
+		WinnerIDs:     append([]string(nil), r.game.WinnerIDs...),
+	}
+	seen := make(map[string]bool, len(r.game.Players)+len(r.game.Waiting))
+	for _, player := range r.game.Players {
+		update.Players = append(update.Players, RoomPlayer{ID: player.ID, Name: player.Name, Connected: player.Connected})
+		seen[player.ID] = true
+	}
+	for _, player := range r.game.Waiting {
+		if seen[player.ID] {
+			continue
+		}
+		update.Players = append(update.Players, RoomPlayer{ID: player.ID, Name: player.Name, Connected: player.Connected})
+	}
+	r.game.Unlock()
+	r.onRoomUpdate(update)
 }
 
 func (r *Room) recordResultLocked() {

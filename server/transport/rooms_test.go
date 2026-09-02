@@ -32,6 +32,32 @@ func TestClientPushIgnoresClosedClient(t *testing.T) {
 	}
 }
 
+func TestRoomPublishesDiscordRosterUpdates(t *testing.T) {
+	updates := make(chan RoomUpdate, 2)
+	manager := NewManager(ManagerConfig{OnRoomUpdate: func(update RoomUpdate) {
+		updates <- update
+	}})
+	client, err := manager.JoinWithMetadata("room", "kai", "Kai", game.RoomMetadata{
+		Platform: "discord", ApplicationID: "app", InstanceID: "instance", GuildID: "guild", ChannelID: "channel",
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := <-updates
+	if joined.Platform != "discord" || joined.InstanceID != "instance" || joined.GuildID != "guild" || joined.ChannelID != "channel" {
+		t.Fatalf("room update metadata = %+v", joined)
+	}
+	if len(joined.Players) != 1 || joined.Players[0].ID != "kai" || joined.Players[0].Name != "Kai" || !joined.Players[0].Connected {
+		t.Fatalf("joined roster = %+v", joined.Players)
+	}
+
+	client.room.remove(client)
+	left := <-updates
+	if len(left.Players) != 1 || left.Players[0].Connected {
+		t.Fatalf("disconnected roster = %+v", left.Players)
+	}
+}
+
 func TestConfiguredTurnTimeoutAdvancesRoomAndKeepsDeadlineInSync(t *testing.T) {
 	manager := NewManager(ManagerConfig{Timeouts: TimeoutConfig{Initial: 20 * time.Millisecond, Turn: 20 * time.Millisecond, Reveal: 10 * time.Millisecond}})
 	if _, err := manager.Join("room", "a", "Ada", nil); err != nil {

@@ -42,6 +42,12 @@ func main() {
 	}
 	defer results.Close()
 
+	discord := auth.Discord{
+		ClientID:     os.Getenv("DISCORD_CLIENT_ID"),
+		ClientSecret: os.Getenv("DISCORD_CLIENT_SECRET"),
+		BotToken:     os.Getenv("DISCORD_BOT_TOKEN"),
+	}
+	sessionCards := newDiscordSessionCardManager(discord)
 	s := &server{
 		rooms: transport.NewManager(transport.ManagerConfig{
 			Timeouts: transport.TimeoutConfig{
@@ -49,15 +55,12 @@ func main() {
 				Turn:    durationEnv("KABO_TURN_TIMEOUT", transport.DefaultTurnTimeout),
 				Reveal:  durationEnv("KABO_REVEAL_TIMEOUT", transport.DefaultRevealTimeout),
 			},
-			Results: results,
+			Results:      results,
+			OnRoomUpdate: sessionCards.Enqueue,
 		}),
-		sessions: auth.NewSessions(),
-		results:  results,
-		discord: auth.Discord{
-			ClientID:     os.Getenv("DISCORD_CLIENT_ID"),
-			ClientSecret: os.Getenv("DISCORD_CLIENT_SECRET"),
-			BotToken:     os.Getenv("DISCORD_BOT_TOKEN"),
-		},
+		sessions:             auth.NewSessions(),
+		results:              results,
+		discord:              discord,
 		interactionPublicKey: parseDiscordPublicKey(os.Getenv("DISCORD_PUBLIC_KEY")),
 		allowGuests:          strings.EqualFold(env("ALLOW_GUESTS", "true"), "true"),
 		upgrader: websocket.Upgrader{
@@ -104,6 +107,9 @@ func main() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		if err := registerLeaderboardCommand(ctx, s.discord.ClientID, s.discord.BotToken, os.Getenv("DISCORD_GUILD_ID")); err != nil {
 			log.Printf("register Discord /leaderboard command: %v", err)
+		}
+		if err := configureDiscordEntryPoint(ctx, s.discord.ClientID, s.discord.BotToken); err != nil {
+			log.Printf("configure Discord Play entry point: %v", err)
 		}
 		cancel()
 	}

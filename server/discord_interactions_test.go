@@ -98,23 +98,64 @@ func TestDiscordInteractionHandlerAcknowledgesPingAndServesLeaderboard(t *testin
 
 func TestLeaderboardComponentsProvideOwnerScopedPaginationAndDelete(t *testing.T) {
 	rows := renderLeaderboardComponents("viewer", 1, 3)
-	if len(rows) != 1 || len(rows[0].Components) != 4 {
-		t.Fatalf("components = %+v, want one row with four buttons", rows)
+	if len(rows) != 1 || len(rows[0].Components) != 5 {
+		t.Fatalf("components = %+v, want one row with five buttons", rows)
 	}
 	buttons := rows[0].Components
-	if buttons[0].Label != "Previous" || buttons[1].Label != "2 / 3" || buttons[2].Label != "Next" {
-		t.Fatalf("pagination buttons = %+v", buttons[:3])
+	if buttons[0].Label != "Play Kabo" || buttons[0].Style != discordButtonPrimary || buttons[0].CustomID != playActivityComponentID {
+		t.Fatalf("play button = %+v", buttons[0])
 	}
-	if buttons[3].Style != discordButtonDanger || buttons[3].Emoji == nil || buttons[3].Emoji.Name != "❌" {
-		t.Fatalf("delete button = %+v", buttons[3])
+	if buttons[1].Label != "Previous" || buttons[2].Label != "2 / 3" || buttons[3].Label != "Next" {
+		t.Fatalf("pagination buttons = %+v", buttons[1:4])
 	}
-	owner, action, page, ok := parseLeaderboardComponentID(buttons[2].CustomID)
+	if buttons[4].Style != discordButtonDanger || buttons[4].Emoji == nil || buttons[4].Emoji.Name != "❌" {
+		t.Fatalf("delete button = %+v", buttons[4])
+	}
+	owner, action, page, ok := parseLeaderboardComponentID(buttons[3].CustomID)
 	if !ok || owner != "viewer" || action != "page" || page != 2 {
 		t.Fatalf("parsed next button = owner %q action %q page %d ok %v", owner, action, page, ok)
 	}
-	owner, action, _, ok = parseLeaderboardComponentID(buttons[3].CustomID)
+	owner, action, _, ok = parseLeaderboardComponentID(buttons[4].CustomID)
 	if !ok || owner != "viewer" || action != "delete" {
 		t.Fatalf("parsed delete button = owner %q action %q ok %v", owner, action, ok)
+	}
+}
+
+func TestDiscordPlayButtonLaunchesActivityForAnyMember(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &server{interactionPublicKey: publicKey}
+	request := signedDiscordRequest(t, privateKey, `{"type":3,"member":{"user":{"id":"any-member"}},"data":{"custom_id":"kabo:activity:play"}}`)
+	response := httptest.NewRecorder()
+	s.handleDiscordInteraction(response, request)
+
+	var interactionResponse discordInteractionResponse
+	if err := json.NewDecoder(response.Body).Decode(&interactionResponse); err != nil {
+		t.Fatal(err)
+	}
+	if interactionResponse.Type != discordResponseLaunchActivity {
+		t.Fatalf("play response type = %d, want %d", interactionResponse.Type, discordResponseLaunchActivity)
+	}
+}
+
+func TestDiscordEntryPointLaunchesActivity(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &server{interactionPublicKey: publicKey}
+	request := signedDiscordRequest(t, privateKey, `{"type":2,"data":{"type":4,"name":"play"}}`)
+	response := httptest.NewRecorder()
+	s.handleDiscordInteraction(response, request)
+
+	var interactionResponse discordInteractionResponse
+	if err := json.NewDecoder(response.Body).Decode(&interactionResponse); err != nil {
+		t.Fatal(err)
+	}
+	if interactionResponse.Type != discordResponseLaunchActivity {
+		t.Fatalf("entry-point response type = %d, want %d", interactionResponse.Type, discordResponseLaunchActivity)
 	}
 }
 

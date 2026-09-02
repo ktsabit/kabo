@@ -102,23 +102,27 @@ The current Go server cannot run as a normal Cloudflare Worker. Cloudflare Conta
 
 ## Discord Activity setup (current SDK flow)
 
-1. Create an application in the [Discord Developer Portal](https://discord.com/developers/applications), enable Activities, and keep the automatically-created **Launch** Entry Point command. Discord currently creates this command when Activities are enabled.
+1. Create an application in the [Discord Developer Portal](https://discord.com/developers/applications) and enable Activities. Discord creates a **Launch** Entry Point command automatically; Kabo changes it to the app-handled **Play** command during command registration so it can publish its own live session card instead of Discord's uneditable default message.
 2. Under Installation, enable both User Install and Guild Install. Under Activity Settings, select every platform you intend to test (desktop, web, iOS, and/or Android). Under OAuth2, add `https://127.0.0.1` as the placeholder redirect URI; the Embedded App SDK handles the Activity redirect.
 3. Put `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET` in the root `.env` beside `docker-compose.yml` on the VPS. The client obtains the public Application ID from `/api/config`; the client secret never reaches Vite or the browser.
 4. Serve the built client and Go API from the same public HTTPS origin. For development, tunnel port 8080 after building the client, or tunnel the Vite port while separately mapping the API. In **Activities → URL Mappings**, map prefix `/` to the public hostname **without** `https://`.
-5. Set `ALLOW_GUESTS=false` in production. Set `DISCORD_BOT_TOKEN` to make the backend validate the supplied instance through Discord's Activity Instance API before creating a game session.
+5. Set `ALLOW_GUESTS=false` in production. Set `DISCORD_BOT_TOKEN` to make the backend validate the supplied instance through Discord's Activity Instance API before creating a game session. The installed bot also needs View Channel, Send Messages, Embed Links, and Attach Files in channels where Kabo is played.
 
 ### Discord `/leaderboard` command
 
 The server includes a signed HTTP interaction handler at `/api/discord/interactions` and reads completed Discord Activity rounds from the same SQLite database. To enable the command:
 
 1. Copy **General Information → Public Key** into `DISCORD_PUBLIC_KEY`.
-2. Set `DISCORD_GUILD_ID` to a test server ID and `DISCORD_REGISTER_COMMANDS=true`, then restart once. The server registers `/leaderboard` as a guild command, which Discord updates immediately.
+2. Set `DISCORD_GUILD_ID` to a test server ID and `DISCORD_REGISTER_COMMANDS=true`, then restart once. The server registers `/leaderboard` as a guild command and configures the global **Play** Entry Point as app-handled. Guild command updates are immediate.
 3. Set `DISCORD_REGISTER_COMMANDS=false` after registration. Remove `DISCORD_GUILD_ID` and repeat registration if you want a global command; global command propagation can take longer.
 4. In **General Information → Interactions Endpoint URL**, enter `https://YOUR_DOMAIN/api/discord/interactions`.
 5. Install the application in the server with the `applications.commands` scope, then run `/leaderboard` in that server.
 
-The command is public and ranks the server by total round wins. Its image uses a top-three podium followed by compact ranked rows; the requesting member is highlighted under their full server nickname. If more than ten players are ranked, owner-only Previous and Next buttons page through the full standings without changing absolute ranks. An owner-only red ❌ button removes the message. Ties are broken by win rate, then average hand score and rounds played. Older Activity rows that stored the Discord client as `desktop` or `mobile` are migrated automatically to the `discord` round source while retaining the client-platform detail. The endpoint verifies Discord's `X-Signature-Ed25519` and `X-Signature-Timestamp` headers before reading any interaction.
+The command is public and ranks the server by total round wins. Its image uses a top-three podium followed by compact ranked rows; the requesting member is highlighted under their full server nickname. If more than ten players are ranked, owner-only Previous and Next buttons page through the full standings without changing absolute ranks. The public **Play Kabo** button launches the Activity, while an owner-only red ❌ button removes the message. Ties are broken by win rate, then average hand score and rounds played. Older Activity rows that stored the Discord client as `desktop` or `mobile` are migrated automatically to the `discord` round source while retaining the client-platform detail. The endpoint verifies Discord's `X-Signature-Ed25519` and `X-Signature-Timestamp` headers before reading any interaction.
+
+### Live Discord session card
+
+When the first player connects to a Discord Activity instance, Kabo posts one session card in that channel. It edits the same message when players join or leave, when a round starts, and when a round finishes. Ordinary card actions are deliberately collapsed into the existing live state, so Discord is not polled and the channel is not flooded. The card uses current server nicknames and cached Discord avatars, shows the current round and roster, and includes a public **Join Kabo** button that launches the Activity in the card's channel.
 
 The client follows the official flow: construct `DiscordSDK`, wait for `ready()`, request `identify` and `applications.commands`, exchange the authorization code on `/api/token`, call `authenticate`, and use `sdk.instanceId` as the room key. Inside the proxy it uses `/.proxy/api/token` and `/.proxy/ws`; normal browser mode uses `/api/token` and `/ws`.
 
@@ -131,7 +135,7 @@ Credential locations in the Developer Portal:
 - `DISCORD_BOT_TOKEN`: **Bot → Token → Reset Token** if Discord is not currently showing one. This is private and belongs only in the host's runtime secrets.
 - `DISCORD_PUBLIC_KEY`: **General Information → Public Key**. Used to verify signed Discord interactions; it is not a secret.
 - `DISCORD_GUILD_ID`: Optional test-server ID for registering `/leaderboard` as an instant guild command.
-- `DISCORD_REGISTER_COMMANDS`: Set to `true` only while registering the command; leave it `false` afterward.
+- `DISCORD_REGISTER_COMMANDS`: Set to `true` only while registering `/leaderboard` and configuring the app-handled **Play** Entry Point; leave it `false` afterward.
 
 Discord Activities route network traffic through their proxy. WebSockets are supported; WebRTC is not. Because this app keeps assets, OAuth, and WebSocket traffic on one mapped origin, no extra third-party URL mappings are required. See Discord's current [Activity tutorial](https://docs.discord.com/developers/activities/building-an-activity), [networking guide](https://docs.discord.com/developers/activities/development-guides/networking), and [multiplayer/instance guide](https://docs.discord.com/developers/activities/development-guides/multiplayer-experience).
 

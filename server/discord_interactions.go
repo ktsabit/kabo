@@ -28,15 +28,18 @@ const (
 	discordResponseChannelMessage    = 4
 	discordResponseDeferred          = 5
 	discordResponseDeferredUpdate    = 6
+	discordResponseLaunchActivity    = 12
 	discordMessageFlagEphemeral      = 1 << 6
 	discordComponentActionRow        = 1
 	discordComponentButton           = 2
+	discordButtonPrimary             = 1
 	discordButtonSecondary           = 2
 	discordButtonDanger              = 4
 	maxDiscordInteractionBody        = 1 << 20
 	leaderboardSize                  = 10
 	leaderboardImageFilename         = "leaderboard.png"
 	leaderboardComponentPrefix       = "kabo:leaderboard:"
+	playActivityComponentID          = "kabo:activity:play"
 )
 
 type discordInteraction struct {
@@ -53,6 +56,7 @@ type discordInteraction struct {
 		User discordUser `json:"user"`
 	} `json:"member"`
 	Data struct {
+		Type     int    `json:"type"`
 		Name     string `json:"name"`
 		CustomID string `json:"custom_id"`
 	} `json:"data"`
@@ -135,6 +139,12 @@ type discordCommandDefinition struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Type        int    `json:"type"`
+	Handler     int    `json:"handler,omitempty"`
+}
+
+type discordRegisteredCommand struct {
+	ID   string `json:"id"`
+	Type int    `json:"type"`
 }
 
 func parseDiscordPublicKey(value string) ed25519.PublicKey {
@@ -194,6 +204,10 @@ func (s *server) handleDiscordInteraction(w http.ResponseWriter, r *http.Request
 }
 
 func (s *server) handleDiscordCommand(w http.ResponseWriter, interaction discordInteraction) {
+	if interaction.Data.Type == 4 {
+		writeJSON(w, http.StatusOK, discordInteractionResponse{Type: discordResponseLaunchActivity})
+		return
+	}
 	if interaction.Data.Name != "leaderboard" {
 		writeJSON(w, http.StatusOK, discordEphemeralResponse("That command is not available."))
 		return
@@ -214,6 +228,10 @@ func (s *server) handleDiscordCommand(w http.ResponseWriter, interaction discord
 }
 
 func (s *server) handleDiscordComponent(w http.ResponseWriter, interaction discordInteraction) {
+	if interaction.Data.CustomID == playActivityComponentID {
+		writeJSON(w, http.StatusOK, discordInteractionResponse{Type: discordResponseLaunchActivity})
+		return
+	}
 	ownerID, action, page, ok := parseLeaderboardComponentID(interaction.Data.CustomID)
 	if !ok {
 		writeJSON(w, http.StatusOK, discordEphemeralResponse("That control is no longer available."))
@@ -353,7 +371,12 @@ func leaderboardPageCount(total int) int {
 }
 
 func renderLeaderboardComponents(ownerID string, page, pageCount int) []discordComponent {
-	buttons := make([]discordComponent, 0, 4)
+	buttons := []discordComponent{{
+		Type:     discordComponentButton,
+		Style:    discordButtonPrimary,
+		Label:    "Play Kabo",
+		CustomID: playActivityComponentID,
+	}}
 	if pageCount > 1 {
 		buttons = append(buttons,
 			discordComponent{Type: discordComponentButton, Style: discordButtonSecondary, Label: "Previous", CustomID: leaderboardPageComponentID(ownerID, page-1), Disabled: page == 0},
@@ -479,6 +502,74 @@ func registerLeaderboardCommand(ctx context.Context, clientID, botToken, guildID
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return fmt.Errorf("Discord returned %s: %s", resp.Status, strings.TrimSpace(string(responseBody)))
+	}
+	return nil
+}
+
+func configureDiscordEntryPoint(ctx context.Context, clientID, botToken string) error {
+	if clientID == "" {
+		return fmt.Errorf("DISCORD_CLIENT_ID is empty")
+	}
+	if botToken == "" {
+		return fmt.Errorf("DISCORD_BOT_TOKEN is empty")
+	}
+	commandsEndpoint := fmt.Sprintf(
+		"https://discord.com/api/v10/applications/%s/commands",
+		url.PathEscape(clientID),
+	)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, commandsEndpoint, nil)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Authorization", "Bot "+botToken)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		responseBody, _ := io.ReadAll(io.LimitReader(response.Body, 1024))
+		response.Body.Close()
+		return fmt.Errorf("Discord returned %s: %s", response.Status, strings.TrimSpace(string(responseBody)))
+	}
+	var commands []discordRegisteredCommand
+	decodeErr := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&commands)
+	response.Body.Close()
+	if decodeErr != nil {
+		return decodeErr
+	}
+
+	method := http.MethodPost
+	endpoint := commandsEndpoint
+	for _, command := range commands {
+		if command.Type == 4 {
+			method = http.MethodPatch
+			endpoint += "/" + url.PathEscape(command.ID)
+			break
+		}
+	}
+	body, err := json.Marshal(discordCommandDefinition{
+		Name:        "play",
+		Description: "Play Kabo",
+		Type:        4,
+		Handler:     1,
+	})
+	if err != nil {
+		return err
+	}
+	request, err = http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Authorization", "Bot "+botToken)
+	request.Header.Set("Content-Type", "application/json")
+	response, err = http.DefaultClient.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		responseBody, _ := io.ReadAll(io.LimitReader(response.Body, 1024))
+		return fmt.Errorf("Discord returned %s: %s", response.Status, strings.TrimSpace(string(responseBody)))
 	}
 	return nil
 }
