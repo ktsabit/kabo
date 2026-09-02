@@ -6,12 +6,14 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"kabo/server/auth"
 	"kabo/server/game"
 	"kabo/server/persistence"
 )
@@ -34,7 +36,26 @@ func TestDiscordInteractionHandlerAcknowledgesPingAndServesLeaderboard(t *testin
 		t.Fatal(err)
 	}
 
-	s := &server{results: store, interactionPublicKey: publicKey}
+	completed := make(chan struct{})
+	var uploadedBody []byte
+	var uploadedContentType string
+	s := &server{
+		results:              store,
+		interactionPublicKey: publicKey,
+		discord: auth.Discord{
+			HTTPClient: &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+				uploadedContentType = request.Header.Get("Content-Type")
+				uploadedBody, _ = io.ReadAll(request.Body)
+				close(completed)
+				return &http.Response{
+					StatusCode: 200,
+					Status:     "200 OK",
+					Body:       io.NopCloser(strings.NewReader("{}")),
+					Header:     make(http.Header),
+				}, nil
+			})},
+		},
+	}
 
 	ping := signedDiscordRequest(t, privateKey, `{"type":1}`)
 	pingResponse := httptest.NewRecorder()
@@ -43,7 +64,7 @@ func TestDiscordInteractionHandlerAcknowledgesPingAndServesLeaderboard(t *testin
 		t.Fatalf("PING response = %d %q", pingResponse.Code, pingResponse.Body.String())
 	}
 
-	command := signedDiscordRequest(t, privateKey, `{"type":2,"guild_id":"guild","data":{"name":"leaderboard"}}`)
+	command := signedDiscordRequest(t, privateKey, `{"type":2,"application_id":"app","token":"token","guild_id":"guild","guild":{"name":"Kabo"},"data":{"name":"leaderboard"}}`)
 	commandResponse := httptest.NewRecorder()
 	s.handleDiscordInteraction(commandResponse, command)
 	if commandResponse.Code != 200 {
@@ -53,8 +74,19 @@ func TestDiscordInteractionHandlerAcknowledgesPingAndServesLeaderboard(t *testin
 	if err := json.NewDecoder(commandResponse.Body).Decode(&response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Type != discordResponseChannelMessage || !strings.Contains(response.Data.Content, "Player") || !strings.Contains(response.Data.Content, "2 pts") {
-		t.Fatalf("command response = %+v", response)
+	if response.Type != discordResponseDeferred || response.Data != nil {
+		t.Fatalf("command response = %+v, want deferred response", response)
+	}
+	select {
+	case <-completed:
+	case <-time.After(time.Second):
+		t.Fatal("deferred leaderboard was not completed")
+	}
+	if !strings.HasPrefix(uploadedContentType, "multipart/form-data;") {
+		t.Fatalf("leaderboard upload Content-Type = %q", uploadedContentType)
+	}
+	if !strings.Contains(string(uploadedBody), "attachment://leaderboard.png") || !strings.Contains(string(uploadedBody), "filename=\"leaderboard.png\"") || !bytes.Contains(uploadedBody, []byte("\x89PNG")) {
+		t.Fatal("leaderboard upload did not contain the expected embed attachment")
 	}
 }
 
@@ -84,4 +116,10 @@ func signedDiscordRequest(t *testing.T, privateKey ed25519.PrivateKey, body stri
 	request.Header.Set("X-Signature-Ed25519", hex.EncodeToString(signature))
 	request.Header.Set("X-Signature-Timestamp", timestamp)
 	return request
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
 }
