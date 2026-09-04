@@ -6,7 +6,7 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_DISCORD_CLIENT_ID: ${VITE_DISCORD_CLIENT_ID:-}
-        VITE_BUILD_VERSION: ${VITE_BUILD_VERSION:?Set VITE_BUILD_VERSION to the five-character commit hash}
+        VITE_BUILD_VERSION: ${VITE_BUILD_VERSION:-}
     ports:
       - "${HOST_PORT:-8080}:8080"
     environment:

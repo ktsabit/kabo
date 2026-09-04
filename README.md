@@ -72,7 +72,7 @@ Run the production image with Docker Compose:
 ```bash
 cp .env.example .env
 # Fill in the Discord values in .env on the VPS, then set ALLOW_GUESTS=false for production.
-VITE_BUILD_VERSION=$(git rev-parse --short=5 HEAD) docker compose up --build -d
+docker compose up --build -d
 ```
 
 The app is available at `http://localhost:8080`. Stop it with `docker compose down`. Round results persist in the `kabo-data` volume, while live rooms and sessions remain in memory.
@@ -80,8 +80,10 @@ The app is available at `http://localhost:8080`. Stop it with `docker compose do
 The Activity reads the public Discord Application ID from the running server, so it does not need to be baked into the browser bundle. A direct Docker build is enough:
 
 ```bash
-docker build --build-arg VITE_BUILD_VERSION=$(git rev-parse --short=5 HEAD) -t kabo .
+docker build -t kabo .
 ```
+
+Docker reads the checked-out commit automatically for the version shown in the bottom-right corner. Set `VITE_BUILD_VERSION` only when an explicit five-character override is needed.
 
 Run the container with server-only secrets:
 

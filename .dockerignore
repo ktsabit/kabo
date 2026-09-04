@@ -1,4 +1,7 @@
-.git
+.git/*
+!.git/HEAD
+!.git/refs
+!.git/refs/**
 .env
 **/.env.local
 **/node_modules
@@ -6,4 +9,3 @@ client/dist
 server/cambio-server
 work
 outputs
-

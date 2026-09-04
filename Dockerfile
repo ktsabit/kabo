@@ -4,11 +4,23 @@ COPY client/package.json client/package-lock.json ./
 RUN npm ci
 COPY client ./
 COPY shared ../shared
+COPY .git/HEAD /src/.git/HEAD
+COPY .git/refs/heads /src/.git/refs/heads
 ARG VITE_DISCORD_CLIENT_ID
 ARG VITE_BUILD_VERSION
 ENV VITE_DISCORD_CLIENT_ID=$VITE_DISCORD_CLIENT_ID
-ENV VITE_BUILD_VERSION=$VITE_BUILD_VERSION
-RUN test ${#VITE_BUILD_VERSION} -eq 5 && npm run build
+RUN set -eu; \
+    version="$VITE_BUILD_VERSION"; \
+    if [ -z "$version" ]; then \
+      head_value="$(cat /src/.git/HEAD)"; \
+      case "$head_value" in \
+        "ref: "*) ref_path="${head_value#ref: }"; revision="$(cat "/src/.git/$ref_path")" ;; \
+        *) revision="$head_value" ;; \
+      esac; \
+      version="$(printf '%.5s' "$revision")"; \
+    fi; \
+    test "${#version}" -eq 5; \
+    VITE_BUILD_VERSION="$version" npm run build
 
 FROM golang:1.24-alpine AS server-build
 WORKDIR /src/server
