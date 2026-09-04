@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/actionsequence.ts","./src/cardfaces.tsx","./src/cards.ts","./src/main.tsx","./src/platform.ts","./src/vite-env.d.ts","../shared/protocol.ts"],"version":"5.9.3"}
+{"root":["./src/app.tsx","./src/card.tsx","./src/actionsequence.ts","./src/cardfaces.tsx","./src/cards.ts","./src/main.tsx","./src/platform.ts","./src/usevisualviewport.ts","./src/vite-env.d.ts","./src/motion/actioncues.ts","./src/motion/actionmotion.tsx","./src/motion/flightmath.ts","../shared/protocol.ts"],"version":"5.9.3"}
