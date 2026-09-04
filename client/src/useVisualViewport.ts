@@ -12,9 +12,9 @@ export function useVisualViewport(): void {
       document.documentElement.style.setProperty("--app-height", `${Math.round(height)}px`);
       document.documentElement.style.setProperty("--app-width", `${Math.round(width)}px`);
       document.documentElement.style.setProperty("--app-offset-top", `${Math.round(top)}px`);
-      document.documentElement.classList.toggle("viewport-compact", width <= 899 || height <= 620);
+      document.documentElement.classList.toggle("viewport-compact", width <= 899);
       document.documentElement.classList.toggle("viewport-narrow", width <= 560);
-      document.documentElement.classList.toggle("viewport-short", height <= 430);
+      document.documentElement.classList.toggle("viewport-short", height <= 430 || (width <= 560 && height <= 500));
     };
     const schedule = () => {
       if (frame !== undefined) return;

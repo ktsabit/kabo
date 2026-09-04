@@ -86,10 +86,12 @@ button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 .ended-screen { grid-row: 1 / -1; min-height: 0; display: grid; place-items: center; overflow: auto; padding: 8px 0 max(8px, env(safe-area-inset-bottom)); }
 .opponents-u { position: absolute; z-index: 2; inset: 44px 0 168px; pointer-events: none; }
 .opponents-u .player-area { position: absolute; left: var(--u-x); top: var(--u-y); transform: translate(-50%, -50%) scale(var(--u-scale)); transform-origin: center; pointer-events: auto; }
+:root:not(.viewport-compact) .opponents-u:is(.opponents-1, .opponents-2, .opponents-3) { --table-card-width: clamp(44px, min(7vw, 10vh), 78px); }
+:root:not(.viewport-compact) .opponents-u:is(.opponents-1, .opponents-2, .opponents-3) .player-area { top: calc(var(--u-y) - 8%); }
 .table-layout .table-center { position: absolute; z-index: 1; left: 50%; top: 50%; transform: translate(-50%, -50%); }
 .table-layout .my-area { grid-row: 3; z-index: 2; }
-.table-layout .my-area { transform: translateY(-24px); }
-.my-area { display: flex; justify-content: center; align-items: center; gap: clamp(6px, 1.8vmin, 20px); }
+.my-area { display: flex; justify-content: center; align-items: center; gap: clamp(6px, 1.8vmin, 20px); pointer-events: none; }
+.my-area > * { pointer-events: auto; }
 .player-area { position: relative; isolation: isolate; padding: var(--table-player-pad-y, 8px) var(--table-player-pad-x, 10px) calc(var(--table-player-pad-y, 8px) + 2px); border: 0; border-radius: 18px; transition: opacity var(--motion-normal) ease, filter var(--motion-normal) ease; }
 .player-area::before { content: ""; position: absolute; z-index: 0; inset: -12px -16px; border-radius: 999px; pointer-events: none; opacity: 0; transform: scale(.7); background: radial-gradient(ellipse at center, rgba(255,211,110,.54) 0%, rgba(255,190,72,.27) 34%, rgba(255,211,110,.1) 60%, transparent 82%); filter: blur(18px); transition: opacity .35s ease, transform .5s cubic-bezier(.2,.75,.25,1); }
 .player-area > * { position: relative; z-index: 1; }
@@ -219,21 +221,14 @@ button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 .drawn-card-position { min-width: var(--table-card-width); min-height: calc(var(--table-card-width) * 1.4); display: flex; justify-content: center; align-items: flex-start; }
 .drawn-card-zone { display: flex; flex-direction: column; align-items: center; gap: 5px; animation: draw-to-table .34s cubic-bezier(.2,.8,.2,1); }
 .action-motion-layer { position: fixed; z-index: 100; inset: 0; overflow: visible; pointer-events: none; contain: layout style; }
-.action-card-ghost { position: absolute; left: 0; top: 0; z-index: 4; margin: 0; animation: none !important; transition: none !important; filter: drop-shadow(0 14px 22px rgba(0,0,0,.42)) drop-shadow(0 0 12px color-mix(in srgb, var(--flight-color) 72%, transparent)); overflow: visible; perspective: 800px; transform-origin: top left; will-change: transform, opacity; }
+.action-card-ghost { position: absolute; left: 0; top: 0; z-index: 4; margin: 0; animation: none !important; transition: none !important; filter: drop-shadow(0 14px 22px rgba(0,0,0,.42)); overflow: visible; perspective: 800px; transform-origin: top left; will-change: transform, opacity; }
 .action-card-pose { position: absolute; inset: 0; transform-origin: center; transform-style: preserve-3d; will-change: transform; }
 .action-card-visual { position: absolute; inset: 0; transform-style: preserve-3d; }
-.action-card-trail { position: absolute; z-index: -1; inset: 9%; border-radius: 10px; background: var(--flight-color); opacity: .34; filter: blur(12px); transform: translate3d(-9px, 10px, 0) scale(.94); }
-.action-card-flight-badge { position: absolute; z-index: 8; left: 50%; top: -10px; min-width: 21px; padding: 3px 5px; border: 2px solid #111431; border-radius: 999px; transform: translateX(-50%); color: #111431; background: var(--flight-color); box-shadow: 0 3px 11px rgba(0,0,0,.42), 0 0 13px color-mix(in srgb, var(--flight-color) 72%, transparent); font-size: 8px; font-weight: 950; line-height: 1; letter-spacing: .05em; text-align: center; white-space: nowrap; }
+.action-card-trail { position: absolute; z-index: -1; inset: 10%; border-radius: 10px; background: rgba(210,214,255,.42); opacity: .24; filter: blur(11px); transform: translate3d(-7px, 8px, 0) scale(.94); }
 .action-card-ghost > .playing-card, .action-card-ghost > .card-back,
 .action-card-ghost .playing-card, .action-card-ghost .card-back,
 .action-card-pose > .playing-card, .action-card-pose > .card-back,
 .action-card-visual > .playing-card, .action-card-visual > .card-back { width: 100% !important; height: 100% !important; aspect-ratio: auto; }
-.action-card-marker { position: absolute; z-index: 3; border: 2px solid var(--flight-color); border-radius: 11px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--flight-color) 18%, transparent), 0 0 20px color-mix(in srgb, var(--flight-color) 72%, transparent); transform-origin: center; will-change: transform, opacity; }
-.action-card-marker-source { border-style: dashed; }
-.action-card-marker-destination { background: color-mix(in srgb, var(--flight-color) 10%, transparent); }
-.action-card-marker span { position: absolute; left: 50%; bottom: -8px; min-width: 18px; padding: 2px 4px; border-radius: 999px; transform: translateX(-50%); color: #111431; background: var(--flight-color); box-shadow: 0 2px 8px rgba(0,0,0,.4); font-size: 7px; font-weight: 950; line-height: 1.15; letter-spacing: .04em; text-align: center; white-space: nowrap; }
-.action-motion-label { position: absolute; z-index: 7; max-width: min(190px, calc(var(--app-width, 100vw) - 20px)); overflow: hidden; padding: 5px 9px; border: 1px solid color-mix(in srgb, var(--flight-color) 82%, white); border-radius: 999px; transform: translateX(-50%); color: #111431; background: var(--flight-color); box-shadow: 0 5px 18px rgba(0,0,0,.38), 0 0 18px color-mix(in srgb, var(--flight-color) 44%, transparent); font-size: 9px; font-weight: 950; line-height: 1; letter-spacing: .045em; text-overflow: ellipsis; white-space: nowrap; will-change: transform, opacity; }
-.motion-remote-action .action-motion-label { color: #f8f8ff; background: color-mix(in srgb, var(--flight-color) 58%, #272b78); }
 .swap-card-flight { perspective: none; transform-style: flat; }
 .swap-card-flight, .swap-card-flight * { animation: none !important; transition: none !important; backface-visibility: visible !important; }
 .action-card-static { position: absolute; z-index: 1; pointer-events: none; overflow: visible; }
@@ -252,8 +247,8 @@ button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 @keyframes draw-to-table { from { transform: translateX(-72px) rotate(-7deg); opacity: 0; } }
 .turn-prompt { position: absolute; z-index: 10; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: 34vw; overflow: hidden; color: #e3e5ff; font-size: clamp(9px, 1.7vmin, 12px); white-space: nowrap; pointer-events: none; }
 .turn-prompt b { display: block; overflow: hidden; padding: 4px 9px; border-radius: 999px; background: rgba(168,176,255,.09); font-weight: 750; text-overflow: ellipsis; }
-.turn-progress { position: fixed; z-index: 30; left: 0; top: 0; width: 100vw; height: 4px; overflow: hidden; background: rgba(245,246,255,.08); pointer-events: none; }
-.turn-progress > span { display: block; width: 100%; height: 100%; transform-origin: left center; transition: transform .1s linear, background-color .25s linear; box-shadow: 0 0 10px currentColor; }
+.turn-progress { position: fixed; z-index: 130; left: 50%; top: var(--app-offset-top, 0); width: var(--app-width, 100vw); height: 4px; overflow: hidden; transform: translateX(-50%); background: rgba(245,246,255,.08); pointer-events: none; }
+.turn-progress > span { display: block; width: 100%; height: 100%; transform-origin: center; transition: transform .1s linear, background-color .25s linear; box-shadow: 0 0 10px currentColor; }
 .turn-countdown { min-width: 28px; margin-left: 3px; color: var(--muted); font-size: 11px; font-style: normal; font-variant-numeric: tabular-nums; text-align: right; }
 .turn-countdown.urgent { color: #ffaaa4; text-shadow: 0 0 12px rgba(255,75,75,.55); }
 .primary-button { border: 0; border-radius: 999px; padding: 10px 16px; color: #111431; background: var(--periwinkle); font-weight: 800; font-size: 12px; cursor: pointer; box-shadow: 0 8px 22px rgba(86,98,231,.28); }
@@ -341,7 +336,7 @@ button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 .loading-screen h1 { margin: 8px 0 0; font-family: Georgia, serif; font-size: 38px; }
 .loading-screen p { margin: 0; color: var(--muted); font-size: 12px; }
 
-@media (max-width: 899px), (max-height: 620px) {
+@media (max-width: 899px) {
   .app-shell { padding-left: max(10px, env(safe-area-inset-left)); padding-right: max(10px, env(safe-area-inset-right)); }
   .topbar { min-height: 44px; gap: 8px; }
   .topbar-actions { gap: 6px; }
@@ -375,7 +370,6 @@ button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 
 @media (max-height: 700px) and (min-width: 600px) {
   .player-heading { margin-bottom: 4px; }
-  .opponents-u .player-area { transform: none; margin-right: 0; }
 }
 
 /* visualViewport classes keep embedded panels and on-screen keyboards in sync
@@ -407,13 +401,14 @@ button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 :root.viewport-narrow .turn-prompt { position: relative; grid-column: 1 / -1; grid-row: 2; justify-self: center; left: auto; top: auto; max-width: calc(var(--app-width, 100vw) - 24px); transform: none; font-size: 9px; }
 :root.viewport-narrow .turn-prompt b { display: block; padding-block: 3px; }
 :root.viewport-narrow .game-surface.table-layout { grid-template-rows: minmax(0, 1fr) minmax(76px, auto) minmax(0, 1fr); padding-top: 2px; }
-:root.viewport-narrow .opponents-u { --opponent-columns: 4; --table-card-width: clamp(20px, 5.3vw, 25px); --table-card-gap: 2px; --table-player-pad-y: 1px; --table-player-pad-x: 2px; --table-heading-gap: 2px; --table-heading-size: 8px; --table-avatar-size: 17px; width: 100%; display: grid; grid-template-columns: repeat(var(--opponent-columns), max-content); grid-auto-rows: max-content; align-content: start; align-items: start; justify-content: center; gap: 2px clamp(2px, 1vw, 5px); padding: 2px 0 4px; overflow: visible; }
+:root.viewport-narrow .opponents-u { --opponent-columns: 4; --table-card-width: clamp(24px, 6.5vw, 28px); --table-card-gap: 2px; --table-player-pad-y: 1px; --table-player-pad-x: 2px; --table-heading-gap: 2px; --table-heading-size: 9px; --table-avatar-size: 19px; width: 100%; display: grid; grid-template-columns: repeat(var(--opponent-columns), max-content); grid-auto-rows: max-content; align-content: start; align-items: start; justify-content: center; gap: 2px clamp(2px, 1vw, 5px); padding: 2px 0 4px; overflow: visible; }
 :root.viewport-narrow .opponents-u.opponents-1 { --opponent-columns: 1; }
 :root.viewport-narrow .opponents-u.opponents-2 { --opponent-columns: 2; }
 :root.viewport-narrow .opponents-u.opponents-3 { --opponent-columns: 3; }
+:root.viewport-narrow .opponents-u:is(.opponents-1, .opponents-2, .opponents-3) { --table-card-width: clamp(30px, 8vw, 38px); }
 :root.viewport-narrow .opponents-u .player-area { width: max-content; min-width: 0; }
 :root.viewport-narrow .opponents-u .player-heading { gap: 2px; margin-bottom: 1px; }
-:root.viewport-narrow .opponents-u .player-heading b { max-width: 28px; font-size: 8px; }
+:root.viewport-narrow .opponents-u .player-heading b { max-width: 38px; font-size: 9px; }
 :root.viewport-narrow .opponents-u .player-heading small { display: none; }
 :root.viewport-narrow .opponents-u .card-grid { gap: 0; }
 :root.viewport-narrow .opponents-u .card-row { gap: 2px; }
@@ -425,12 +420,30 @@ button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 :root.viewport-narrow .ended-screen { overflow-x: hidden; }
 
 :root.viewport-short .app-shell { padding-top: max(7px, env(safe-area-inset-top)); padding-bottom: max(6px, env(safe-area-inset-bottom)); }
-:root.viewport-short .game-surface.table-layout { --table-card-width: clamp(30px, 8vmin, 35px); grid-template-rows: minmax(0, 1fr) minmax(68px, auto) minmax(0, 1fr); padding-block: 2px; }
-:root.viewport-short .opponents-u { --table-card-width: clamp(22px, 6vmin, 28px); padding-top: 1px; padding-bottom: 2px; }
+:root.viewport-short .game-surface.table-layout { --table-card-width: clamp(34px, 10vh, 44px); grid-template-rows: minmax(0, 1fr) minmax(68px, auto) minmax(0, 1fr); padding-block: 2px; }
+:root.viewport-short.viewport-narrow .opponents-u { --table-card-width: clamp(24px, 6.5vw, 28px); padding-top: 1px; padding-bottom: 2px; }
+:root.viewport-short.viewport-narrow .opponents-u { transform: translateY(-6px); }
+:root.viewport-short.viewport-narrow .table-layout .table-center { left: auto; right: 0; top: calc(50% + 4px); transform: translateY(-50%); }
+:root.viewport-short.viewport-narrow .my-area { transform: translateY(8px) !important; }
 :root.viewport-short .player-heading { margin-bottom: 2px; }
 :root.viewport-short .pile-zone { gap: 4px; }
 :root.viewport-short .discard-wrap { gap: 3px; padding-top: 2px; }
 :root.viewport-short .build-status { bottom: 4px; }
+
+/* With only a few opponents, a short pane still has enough horizontal room
+   for proper table seating. Keep the U instead of collapsing everyone into a
+   tiny top rail. */
+:root.viewport-compact:not(.viewport-narrow):not(.viewport-short) .opponents-u:is(.opponents-1, .opponents-2, .opponents-3) { --table-card-width: clamp(38px, min(7vw, 10vh), 54px); --table-card-gap: clamp(4px, .8vmin, 8px); --table-player-pad-y: 4px; --table-player-pad-x: 5px; --table-heading-gap: 4px; --table-heading-size: 11px; --table-avatar-size: 23px; position: absolute; inset: 10px 0 auto; height: calc(100% - 106px); grid-row: auto; align-self: auto; display: block; padding: 0; overflow: visible; pointer-events: none; }
+:root.viewport-compact:not(.viewport-narrow):not(.viewport-short) .opponents-u:is(.opponents-1, .opponents-2, .opponents-3) .player-area { position: absolute; left: var(--u-x); top: var(--u-y); transform: translate(-50%, -50%) scale(var(--u-scale)); transform-origin: center; pointer-events: auto; }
+:root.viewport-compact:not(.viewport-narrow):not(.viewport-short) .opponents-u:is(.opponents-1, .opponents-2, .opponents-3) .player-heading b { max-width: 96px; }
+:root.viewport-compact:not(.viewport-narrow):not(.viewport-short) .opponents-u:is(.opponents-1, .opponents-2, .opponents-3) ~ .table-center { top: 53%; }
+
+/* Very short panes need two horizontal bands. The opponent band uses width,
+   while the pile moves beside the local hand instead of competing for height. */
+:root.viewport-short:not(.viewport-narrow) .opponents-u { --table-card-width: clamp(38px, 5.8vw, 42px); --table-card-gap: 3px; --table-player-pad-y: 2px; --table-player-pad-x: 3px; --table-heading-gap: 2px; --table-heading-size: 10px; --table-avatar-size: 21px; position: relative; inset: auto; grid-row: 1; align-self: start; display: flex; align-items: flex-start; justify-content: safe center; gap: clamp(3px, .8vw, 8px); min-width: 0; padding: 1px 5px 3px; overflow: visible; pointer-events: auto; }
+:root.viewport-short:not(.viewport-narrow) .opponents-u .player-area { position: relative; left: auto; top: auto; flex: 0 0 auto; transform: none; pointer-events: auto; }
+:root.viewport-short:not(.viewport-narrow) .opponents-u .player-heading b { max-width: 62px; }
+:root.viewport-short:not(.viewport-narrow) .table-layout .table-center { left: 22%; top: 72%; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }

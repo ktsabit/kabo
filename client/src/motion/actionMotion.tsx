@@ -18,8 +18,6 @@ export type CapturedActionMotion = {
 
 export type ActionMotionContext = {
   activePlayerId?: string;
-  viewerId: string;
-  actorName?: string;
 };
 
 type MeasuredAnchor = {
@@ -92,43 +90,6 @@ function waitForAnimations(animations: Animation[]): Promise<void> {
   return Promise.all(animations.map((animation) => animation.finished.catch(() => undefined))).then(() => undefined);
 }
 
-function flightColor(plan: ActionMotionPlan, cue: CardFlightCue, ownAction: boolean): string {
-  switch (plan.actionKind) {
-    case "swap": return cue.id === "swap-a" ? "#63eaf2" : "#c8a2ff";
-    case "gift": return "#75e6b5";
-    case "slap": return ownAction ? "#ffd36e" : "#a9b0ff";
-    case "wrong_slap": return "#ff7267";
-    case "late_slap": return "#a9b0ff";
-    case "replace": return cue.id === "replace-out" ? "#ff9f78" : "#7ed8ed";
-    case "discard": return "#ff9f78";
-  }
-}
-
-function flightBadge(plan: ActionMotionPlan, cue: CardFlightCue): string | undefined {
-  switch (plan.actionKind) {
-    case "swap": return cue.id === "swap-a" ? "A" : "B";
-    case "gift": return "GIVE";
-    case "slap": return "SLAP";
-    case "wrong_slap": return "MISS";
-    case "late_slap": return "LATE";
-    case "replace": return cue.id === "replace-out" ? "OUT" : "IN";
-    case "discard": return "DROP";
-  }
-}
-
-function actionLabel(plan: ActionMotionPlan, ownAction: boolean, actorName?: string): string {
-  const actor = ownAction ? "YOU" : (actorName ?? "PLAYER").toLocaleUpperCase();
-  switch (plan.actionKind) {
-    case "swap": return `${actor} SWAP${ownAction ? "" : "S"}`;
-    case "gift": return `${actor} GIVE${ownAction ? "" : "S"}`;
-    case "slap": return `${actor} SLAP${ownAction ? "" : "S"}`;
-    case "wrong_slap": return ownAction ? "YOUR SLAP MISSED" : `${actor} MISSED`;
-    case "late_slap": return ownAction ? "YOUR SLAP WAS LATE" : `${actor} WAS LATE`;
-    case "replace": return `${actor} REPLACE${ownAction ? "" : "S"}`;
-    case "discard": return `${actor} DISCARD${ownAction ? "" : "S"}`;
-  }
-}
-
 export class ActionMotionDirector {
   private readonly root: () => HTMLElement | null;
   private layer?: HTMLElement;
@@ -181,64 +142,40 @@ export class ActionMotionDirector {
       if (element) destinations.set(key, { element, rect: element.getBoundingClientRect() });
     }
 
-    const hidden = [...new Set([...destinations.values()].flatMap((item) => item.element ? [item.element] : []))];
+    const returningSources = captured.plan.cues.flatMap((cue) => {
+      if (!cue.returnToSource) return [];
+      const source = elementFor(cue.source, index);
+      return source ? [source] : [];
+    });
+    const hidden = [...new Set([
+      ...[...destinations.values()].flatMap((item) => item.element ? [item.element] : []),
+      ...returningSources,
+    ])];
     const activeArea = context.activePlayerId
       ? [...root.querySelectorAll<HTMLElement>(".player-area")].find((area) => area.dataset.playerId === context.activePlayerId)
       : undefined;
-    const ownAction = captured.plan.actorId === context.viewerId;
     const layer = this.motionLayer();
-    layer.className = `action-motion-layer motion-${captured.plan.actionKind} ${ownAction ? "motion-own-action" : "motion-remote-action"}`;
+    layer.className = `action-motion-layer motion-${captured.plan.actionKind}`;
     layer.replaceChildren();
     root.classList.add("action-in-flight");
     activeArea?.classList.add("action-active-held");
     hidden.forEach((element) => element.classList.add("action-visual-hidden"));
 
     const roots: Root[] = [];
-    if (captured.previousDiscard && discardRect) {
-      layer.appendChild(this.staticCard(captured.previousDiscard.element, discardRect));
-    }
+    const preservedDiscard = captured.previousDiscard && discardRect
+      ? this.staticCard(captured.previousDiscard.element, discardRect)
+      : undefined;
+    if (preservedDiscard) layer.appendChild(preservedDiscard);
 
     const flights = captured.plan.cues.flatMap((cue) => {
       const source = captured.sources.get(anchorKey(cue.source));
       const destination = destinations.get(anchorKey(cue.destination));
       if (!source || !destination) return [];
-      const color = flightColor(captured.plan, cue, ownAction);
-      const badge = flightBadge(captured.plan, cue);
-      const mounted = this.mountFlight(cue, source, destination.rect, color, badge);
+      const mounted = this.mountFlight(cue, source);
       roots.push(...mounted.roots);
-      const sourceMarker = this.marker(source.rect, color, "source", badge);
-      const destinationMarker = this.marker(destination.rect, color, "destination", badge);
-      layer.append(sourceMarker, destinationMarker);
-      this.playMarker(sourceMarker, "source", cue.delayMs + cue.durationMs);
-      this.playMarker(destinationMarker, "destination", cue.delayMs + cue.durationMs);
       layer.appendChild(mounted.outer);
       return [mounted];
     });
-    const firstFlight = flights[0];
-    if (firstFlight) {
-      const sourceRects = flights.flatMap((flight) => {
-        const source = captured.sources.get(anchorKey(flight.cue.source));
-        return source ? [source.rect] : [];
-      });
-      if (sourceRects.length > 0) {
-        const left = Math.min(...sourceRects.map((rect) => rect.left));
-        const top = Math.min(...sourceRects.map((rect) => rect.top));
-        const right = Math.max(...sourceRects.map((rect) => rect.right));
-        const bottom = Math.max(...sourceRects.map((rect) => rect.bottom));
-        const label = this.actionTag(
-          actionLabel(captured.plan, ownAction, context.actorName),
-          { left, top, width: right - left, height: bottom - top },
-          flightColor(captured.plan, firstFlight.cue, ownAction),
-        );
-        layer.appendChild(label);
-        this.animate(label, [
-          { opacity: 0, transform: "translate3d(-50%, 6px, 0) scale(.96)" },
-          { opacity: 1, transform: "translate3d(-50%, 0, 0) scale(1)", offset: .18 },
-          { opacity: 1, transform: "translate3d(-50%, 0, 0) scale(1)", offset: .72 },
-          { opacity: 0, transform: "translate3d(-50%, -4px, 0) scale(.98)" },
-        ], { duration: firstFlight.cue.delayMs + firstFlight.cue.durationMs + 100, easing: "ease-out", fill: "forwards" });
-      }
-    }
 
     let cleaned = false;
     const cleanup = () => {
@@ -260,13 +197,27 @@ export class ActionMotionDirector {
       await waitForAnimations(travel);
       if (epoch !== this.epoch) return;
 
+      // Remove the preserved old discard in the same frame that the mounted
+      // destination is revealed, so it cannot flash through the landing card.
+      preservedDiscard?.remove();
+      const returns = flights.flatMap((mounted) => {
+        if (!mounted.cue.returnToSource) return [];
+        const source = captured.sources.get(anchorKey(mounted.cue.source));
+        const destination = destinations.get(anchorKey(mounted.cue.destination));
+        return source && destination ? this.playReturn(mounted, source.rect, destination.rect) : [];
+      });
+      if (returns.length > 0) {
+        await waitForAnimations(returns);
+        if (epoch !== this.epoch) return;
+      }
+
       // Destination cards are already mounted. Reveal them under the landed
       // flyer, then fade only the overlay during a short handoff settle.
       hidden.forEach((element) => element.classList.remove("action-visual-hidden"));
       const settles = flights.map(({ outer, cue }) => this.animate(outer, [
         { opacity: 1 },
         { opacity: 0 },
-      ], { duration: cue.handoff ? 72 : 120, easing: "cubic-bezier(.4,0,1,1)", fill: "forwards" }));
+      ], { duration: cue.handoff ? 72 : 64, easing: "cubic-bezier(.4,0,1,1)", fill: "forwards" }));
       await waitForAnimations(settles);
       if (epoch !== this.epoch) return;
 
@@ -315,73 +266,9 @@ export class ActionMotionDirector {
     return plate;
   }
 
-  private marker(rect: RectLike, color: string, role: "source" | "destination", badge?: string): HTMLElement {
-    const marker = document.createElement("div");
-    marker.className = `action-card-marker action-card-marker-${role}`;
-    marker.style.setProperty("--flight-color", color);
-    Object.assign(marker.style, {
-      left: `${rect.left}px`,
-      top: `${rect.top}px`,
-      width: `${rect.width}px`,
-      height: `${rect.height}px`,
-    });
-    if (badge) {
-      const chip = document.createElement("span");
-      chip.textContent = badge;
-      marker.appendChild(chip);
-    }
-    return marker;
-  }
-
-  private playMarker(marker: HTMLElement, role: "source" | "destination", duration: number): void {
-    if (role === "source") {
-      this.animate(marker, [
-        { opacity: .88, transform: "scale(1)" },
-        { opacity: .42, transform: "scale(1.12)", offset: .52 },
-        { opacity: 0, transform: "scale(1.18)" },
-      ], { duration, easing: "ease-out", fill: "forwards" });
-      return;
-    }
-    this.animate(marker, [
-      { opacity: .12, transform: "scale(.9)" },
-      { opacity: .2, transform: "scale(.94)", offset: .45 },
-      { opacity: .95, transform: "scale(1.08)", offset: .84 },
-      { opacity: .55, transform: "scale(1)" },
-    ], { duration, easing: "cubic-bezier(.2,.8,.2,1)", fill: "forwards" });
-  }
-
-  private actionTag(label: string, sourceGroup: RectLike, color: string): HTMLElement {
-    const tag = document.createElement("div");
-    tag.className = "action-motion-label";
-    tag.textContent = label;
-    tag.style.setProperty("--flight-color", color);
-    const viewport = window.visualViewport;
-    const viewportLeft = viewport?.offsetLeft ?? 0;
-    const viewportWidth = viewport?.width ?? document.documentElement.clientWidth;
-    const viewportRight = viewportLeft + viewportWidth;
-    const groupRight = sourceGroup.left + sourceGroup.width;
-    const roomOnRight = viewportRight - groupRight;
-    const roomOnLeft = sourceGroup.left - viewportLeft;
-    let center = sourceGroup.left + sourceGroup.width / 2;
-    let top = Math.max((viewport?.offsetTop ?? 0) + 7, sourceGroup.top - 31);
-    if (roomOnRight >= 118) {
-      center = groupRight + 59;
-      top = sourceGroup.top + sourceGroup.height / 2 - 9;
-    } else if (roomOnLeft >= 118) {
-      center = sourceGroup.left - 59;
-      top = sourceGroup.top + sourceGroup.height / 2 - 9;
-    }
-    Object.assign(tag.style, {
-      left: `${Math.max(viewportLeft + 54, Math.min(viewportRight - 54, center))}px`,
-      top: `${top}px`,
-    });
-    return tag;
-  }
-
-  private mountFlight(cue: CardFlightCue, source: CapturedAnchor, destination: RectLike, color: string, badge?: string): MountedFlight {
+  private mountFlight(cue: CardFlightCue, source: CapturedAnchor): MountedFlight {
     const outer = document.createElement("div");
     outer.className = `action-card-ghost ${cue.className ?? ""}`.trim();
-    outer.style.setProperty("--flight-color", color);
     Object.assign(outer.style, {
       width: `${source.rect.width}px`,
       height: `${source.rect.height}px`,
@@ -421,12 +308,6 @@ export class ActionMotionDirector {
       visual.appendChild(source.element.cloneNode(true));
     }
     pose.appendChild(visual);
-    if (badge) {
-      const chip = document.createElement("span");
-      chip.className = "action-card-flight-badge";
-      chip.textContent = badge;
-      pose.appendChild(chip);
-    }
     outer.append(trail, pose);
     return { cue, outer, pose, roots };
   }
@@ -458,6 +339,30 @@ export class ActionMotionDirector {
       ], { ...options, easing: "cubic-bezier(.45,.05,.55,.95)" }));
     }
     return animations;
+  }
+
+  private playReturn(mounted: MountedFlight, source: DOMRect, destination: RectLike): Animation[] {
+    const { travel, pose } = planFlightFrames({
+      from: source,
+      to: destination,
+      arcSide: mounted.cue.arcSide,
+      arcRatio: mounted.cue.arcRatio,
+      tilt: mounted.cue.tilt,
+    });
+    const reverse = (frames: Keyframe[]) => [...frames].reverse().map((frame, index, values) => ({
+      ...frame,
+      offset: values.length === 1 ? 1 : index / (values.length - 1),
+    }));
+    const options: KeyframeAnimationOptions = {
+      duration: mounted.cue.returnDurationMs ?? mounted.cue.durationMs,
+      delay: 55,
+      easing: "linear",
+      fill: "forwards",
+    };
+    return [
+      this.animate(mounted.outer, reverse(travel), options),
+      this.animate(mounted.pose, reverse(pose), options),
+    ];
   }
 
   private async compactHand(root: HTMLElement, playerId: string): Promise<void> {

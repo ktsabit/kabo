@@ -33,6 +33,8 @@ describe("planActionMotion", () => {
     const wrong = planActionMotion(action({ kind: "wrong_slap", target: second, card: face }));
     const late = planActionMotion(action({ kind: "late_slap", target: second, card: face }));
     expect(wrong.cues[0].destination).toEqual({ kind: "zone", zone: "discard-side" });
+    expect(wrong.cues[0]).toMatchObject({ returnToSource: true, returnDurationMs: MOTION_TIMING.rejectedSlapReturnMs });
+    expect(late.cues[0]).toMatchObject({ returnToSource: true, returnDurationMs: MOTION_TIMING.rejectedSlapReturnMs });
     expect(wrong.penaltyPlayerId).toBe("p1");
     expect(late.penaltyPlayerId).toBeUndefined();
   });

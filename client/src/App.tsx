@@ -96,8 +96,6 @@ function App() {
     });
     void actionMotion.current!.play(motion, {
       activePlayerId: heldActivePlayerID,
-      viewerId: queued.snapshot.you.id,
-      actorName: queued.snapshot.players.find((player) => player.id === queued.action.actorId)?.name,
     })
       .catch((error: unknown) => console.error("Kabo action animation failed", error))
       .finally(() => {
@@ -747,7 +745,7 @@ function TurnPrompt({ snapshot, isMyTurn }: { snapshot: SnapshotMessage; isMyTur
   if (snapshot.phase === "await_swap") action = isMyTurn ? "Select 2 to swap" : "Choosing cards";
   if (snapshot.phase === "await_gift") action = "Give";
   if (!action) return null;
-  return <div className="turn-prompt"><TurnProgress deadlineAt={snapshot.deadlineAt} /><b>{action}</b></div>;
+  return <><TurnProgress deadlineAt={snapshot.deadlineAt} /><div className="turn-prompt"><b>{action}</b></div></>;
 }
 
 function TurnProgress({ deadlineAt }: { deadlineAt?: number }) {
@@ -837,7 +835,7 @@ function uSeatStyle(index: number, total: number): CSSProperties {
   const spread = total <= 1 ? 0 : total === 2 ? 36 : total === 3 ? 64 : 72;
   const x = total <= 1 ? 50 : 50 - spread / 2 + (spread * index) / (total - 1);
   const edge = Math.abs(x - 50) / Math.max(spread / 2, 1);
-  const y = 20 + 25 * edge ** 1.55;
+  const y = 25 + 27 * edge ** 1.55;
   const scale = total <= 4 ? 1 : total <= 6 ? .82 : .7;
   return { "--u-x": `${x}%`, "--u-y": `${y}%`, "--u-scale": scale } as CSSProperties;
 }
