@@ -19,7 +19,7 @@ import { useVisualViewport } from "./useVisualViewport";
 type ConnectionState = "connecting" | "open" | "closed";
 type HandLayout = "strip" | "grid";
 
-const DOUBLE_TAP_WINDOW = 500;
+const DOUBLE_TAP_WINDOW = 200;
 const HAND_LAYOUT_STORAGE_KEY = "kabo-hand-layout";
 const BUILD_VERSION = (import.meta.env.VITE_BUILD_VERSION || "local").slice(0, 5);
 

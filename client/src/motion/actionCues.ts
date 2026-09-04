@@ -6,9 +6,9 @@ export const MOTION_TIMING = {
   replaceInMs: 410,
   discardMs: 360,
   slapMs: 390,
-  giftMs: 400,
+  giftMs: 320,
   rejectedSlapOutMs: 320,
-  rejectedSlapHoldMs: 700,
+  rejectedSlapHoldMs: 500,
   rejectedSlapReturnMs: 420,
   compactMs: 220,
 } as const;
