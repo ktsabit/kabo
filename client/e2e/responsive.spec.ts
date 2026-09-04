@@ -488,6 +488,33 @@ test("a power-card swap completes as soon as the second card is selected", async
   }
 });
 
+test("a double-click still slaps during a power-card swap", async ({ page }) => {
+  const room = `swap-slap-${Date.now()}`;
+  const clients = await startedRoom(room, 2);
+  try {
+    const swap = await advanceToSwap(clients);
+    const actorId = swap.currentPlayerId;
+    const observer = clients[actorId === "p0" ? 1 : 0];
+    const actionBefore = observer.latest.action?.id ?? 0;
+    await page.goto(`/?room=${room}&user=${actorId}&name=${actorId === "p0" ? "Player%200" : "Player%201"}`);
+    await expect(page.getByText("Select 2 to swap")).toBeVisible();
+
+    const target = page.locator(".my-area .card-button:not(:disabled)").first();
+    await target.click();
+    await page.waitForTimeout(425);
+    await target.click();
+
+    const slap = await observer.waitFor((snapshot) =>
+      snapshot.action?.id > actionBefore
+      && snapshot.action?.actorId === actorId
+      && ["slap", "late_slap", "wrong_slap"].includes(snapshot.action.kind),
+    );
+    expect(slap.action.kind).not.toBe("swap");
+  } finally {
+    clients.forEach((client) => client.close());
+  }
+});
+
 test("resize interruption and reconnect recover to an authoritative table", async ({ page, context }) => {
   const room = `recovery-${Date.now()}`;
   const clients = await startedRoom(room, 2);

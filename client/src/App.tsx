@@ -43,7 +43,7 @@ type FlightSettle = {
   destination?: () => DOMRect | undefined;
 };
 
-const DOUBLE_TAP_WINDOW = 360;
+const DOUBLE_TAP_WINDOW = 500;
 const HAND_LAYOUT_STORAGE_KEY = "kabo-hand-layout";
 const BUILD_VERSION = (import.meta.env.VITE_BUILD_VERSION || "local").slice(0, 5);
 const activeActionAnimations = new Set<Animation>();
@@ -269,7 +269,7 @@ function App() {
 
   useEffect(() => {
     setSwapSelection([]);
-  }, [snapshot?.phase]);
+  }, [snapshot?.phase, snapshot?.action?.id]);
 
   const send = useCallback((message: ClientMessage) => {
     if (socket.current?.readyState !== WebSocket.OPEN) {
@@ -666,22 +666,23 @@ function PlayerArea({ player, handLayout, snapshot, selected, onCard, onSlap, on
 
   const handleTap = (target: CardRef) => {
     if (dragging.current || !canInteract) return;
-    if (snapshot.phase === "await_swap" && snapshot.currentPlayerId === snapshot.you.id) {
-      if (tap.current?.timer) window.clearTimeout(tap.current.timer);
-      tap.current = undefined;
-      onCard(target);
-      return;
-    }
     const key = refKey(target);
     const now = Date.now();
-    if (tap.current?.key === key && now - tap.current.at < DOUBLE_TAP_WINDOW) {
+    if (tap.current?.key === key && now - tap.current.at <= DOUBLE_TAP_WINDOW) {
       if (tap.current.timer) window.clearTimeout(tap.current.timer);
       tap.current = undefined;
-      if (snapshot.phase === "await_swap" && snapshot.currentPlayerId === snapshot.you.id) onCard(target);
-      else onSlap(target);
+      onSlap(target);
       return;
     }
     if (tap.current?.timer) window.clearTimeout(tap.current.timer);
+    if (snapshot.phase === "await_swap" && snapshot.currentPlayerId === snapshot.you.id) {
+      const timer = window.setTimeout(() => {
+        if (tap.current?.key === key && tap.current.at === now) tap.current = undefined;
+      }, DOUBLE_TAP_WINDOW);
+      tap.current = { key, at: now, timer };
+      onCard(target);
+      return;
+    }
     const timer = window.setTimeout(() => {
       if (dragging.current) {
         tap.current = undefined;
