@@ -38,6 +38,8 @@ export type CardFlightCue = {
 
 export type ActionMotionPlan = {
   actionId: number;
+  actionKind: ActionView["kind"];
+  actorId: string;
   cues: CardFlightCue[];
   preserveDiscard: boolean;
   compactPlayerId?: string;
@@ -58,7 +60,13 @@ function flight(
 }
 
 export function planActionMotion(action: ActionView): ActionMotionPlan {
-  const base: ActionMotionPlan = { actionId: action.id, cues: [], preserveDiscard: false };
+  const base: ActionMotionPlan = {
+    actionId: action.id,
+    actionKind: action.kind,
+    actorId: action.actorId,
+    cues: [],
+    preserveDiscard: false,
+  };
   switch (action.kind) {
     case "swap":
       if (!action.first || !action.second) return base;

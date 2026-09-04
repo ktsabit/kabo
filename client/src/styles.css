@@ -18,6 +18,7 @@
   --card-display: "Cooper Black", "Arial Rounded MT Bold", "Arial Black", Georgia, serif;
   --table-card-width: clamp(58px, min(7.4vw, 8.7vh), 88px);
   --app-height: 100dvh;
+  --app-width: 100vw;
   --app-offset-top: 0px;
 }
 
@@ -126,6 +127,7 @@ button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 .avatar-0 { background: #a9b0ff; } .avatar-1 { background: #ff9f9a; } .avatar-2 { background: #8fdaee; } .avatar-3 { background: #c9b8ff; } .avatar-4 { background: #f0a9e4; }
 .card-grid { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: var(--table-card-gap, clamp(7px, .7vw, 10px)); width: max-content; max-width: none; overflow: visible; transform-origin: center; transition: transform var(--motion-normal) cubic-bezier(.2,.75,.25,1), filter var(--motion-normal) ease; }
 .card-row { position: relative; display: flex; gap: var(--table-card-gap, clamp(8px, .8vw, 12px)); min-width: var(--table-card-width); min-height: calc(var(--table-card-width) * 1.4); }
+.hands-strip .opponents-u:is(.opponents-5, .opponents-6, .opponents-7) .card-row { display: grid; grid-template-rows: repeat(2, calc(var(--table-card-width) * 1.4)); grid-auto-flow: column; grid-auto-columns: var(--table-card-width); gap: var(--table-card-gap); }
 .hands-strip .my-area .player-area { max-width: calc(100vw - 64px); }
 .hands-strip .my-area .card-grid { max-width: calc(100vw - 84px); overflow-x: auto; overflow-y: hidden; padding: 8px 3px 3px; scrollbar-width: none; }
 .hands-strip .my-area .card-grid::-webkit-scrollbar { display: none; }
@@ -217,11 +219,21 @@ button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 .drawn-card-position { min-width: var(--table-card-width); min-height: calc(var(--table-card-width) * 1.4); display: flex; justify-content: center; align-items: flex-start; }
 .drawn-card-zone { display: flex; flex-direction: column; align-items: center; gap: 5px; animation: draw-to-table .34s cubic-bezier(.2,.8,.2,1); }
 .action-motion-layer { position: fixed; z-index: 100; inset: 0; overflow: visible; pointer-events: none; contain: layout style; }
-.action-card-ghost { position: absolute; left: 0; top: 0; z-index: 2; margin: 0; animation: none !important; transition: none !important; filter: drop-shadow(0 14px 22px rgba(0,0,0,.42)); overflow: visible; perspective: 800px; transform-origin: top left; will-change: transform, opacity; }
+.action-card-ghost { position: absolute; left: 0; top: 0; z-index: 4; margin: 0; animation: none !important; transition: none !important; filter: drop-shadow(0 14px 22px rgba(0,0,0,.42)) drop-shadow(0 0 12px color-mix(in srgb, var(--flight-color) 72%, transparent)); overflow: visible; perspective: 800px; transform-origin: top left; will-change: transform, opacity; }
 .action-card-pose { position: absolute; inset: 0; transform-origin: center; transform-style: preserve-3d; will-change: transform; }
+.action-card-visual { position: absolute; inset: 0; transform-style: preserve-3d; }
+.action-card-trail { position: absolute; z-index: -1; inset: 9%; border-radius: 10px; background: var(--flight-color); opacity: .34; filter: blur(12px); transform: translate3d(-9px, 10px, 0) scale(.94); }
+.action-card-flight-badge { position: absolute; z-index: 8; left: 50%; top: -10px; min-width: 21px; padding: 3px 5px; border: 2px solid #111431; border-radius: 999px; transform: translateX(-50%); color: #111431; background: var(--flight-color); box-shadow: 0 3px 11px rgba(0,0,0,.42), 0 0 13px color-mix(in srgb, var(--flight-color) 72%, transparent); font-size: 8px; font-weight: 950; line-height: 1; letter-spacing: .05em; text-align: center; white-space: nowrap; }
 .action-card-ghost > .playing-card, .action-card-ghost > .card-back,
 .action-card-ghost .playing-card, .action-card-ghost .card-back,
-.action-card-pose > .playing-card, .action-card-pose > .card-back { width: 100% !important; height: 100% !important; aspect-ratio: auto; }
+.action-card-pose > .playing-card, .action-card-pose > .card-back,
+.action-card-visual > .playing-card, .action-card-visual > .card-back { width: 100% !important; height: 100% !important; aspect-ratio: auto; }
+.action-card-marker { position: absolute; z-index: 3; border: 2px solid var(--flight-color); border-radius: 11px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--flight-color) 18%, transparent), 0 0 20px color-mix(in srgb, var(--flight-color) 72%, transparent); transform-origin: center; will-change: transform, opacity; }
+.action-card-marker-source { border-style: dashed; }
+.action-card-marker-destination { background: color-mix(in srgb, var(--flight-color) 10%, transparent); }
+.action-card-marker span { position: absolute; left: 50%; bottom: -8px; min-width: 18px; padding: 2px 4px; border-radius: 999px; transform: translateX(-50%); color: #111431; background: var(--flight-color); box-shadow: 0 2px 8px rgba(0,0,0,.4); font-size: 7px; font-weight: 950; line-height: 1.15; letter-spacing: .04em; text-align: center; white-space: nowrap; }
+.action-motion-label { position: absolute; z-index: 7; max-width: min(190px, calc(var(--app-width, 100vw) - 20px)); overflow: hidden; padding: 5px 9px; border: 1px solid color-mix(in srgb, var(--flight-color) 82%, white); border-radius: 999px; transform: translateX(-50%); color: #111431; background: var(--flight-color); box-shadow: 0 5px 18px rgba(0,0,0,.38), 0 0 18px color-mix(in srgb, var(--flight-color) 44%, transparent); font-size: 9px; font-weight: 950; line-height: 1; letter-spacing: .045em; text-overflow: ellipsis; white-space: nowrap; will-change: transform, opacity; }
+.motion-remote-action .action-motion-label { color: #f8f8ff; background: color-mix(in srgb, var(--flight-color) 58%, #272b78); }
 .swap-card-flight { perspective: none; transform-style: flat; }
 .swap-card-flight, .swap-card-flight * { animation: none !important; transition: none !important; backface-visibility: visible !important; }
 .action-card-static { position: absolute; z-index: 1; pointer-events: none; overflow: visible; }
@@ -269,9 +281,9 @@ button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 .round-ended { display: block !important; }
 .aftermath-center { grid-template-rows: minmax(0, auto); align-items: center; }
 .table-layout .aftermath-center { top: 50%; }
-.aftermath-center .round-summary.next-round-lobby { width: min(440px, calc(100vw - 24px)); max-height: calc(100dvh - 84px); }
+.aftermath-center .round-summary.next-round-lobby { width: min(440px, calc(100vw - 24px)); max-height: calc(var(--app-height, 100dvh) - 84px); }
 .round-summary { display: flex; flex-direction: column; align-items: center; gap: 5px; min-width: min(280px, 88vw); padding: 11px 18px; border-radius: 18px; background: rgba(13,16,56,.82); box-shadow: 0 16px 45px rgba(0,0,0,.34); backdrop-filter: blur(12px); text-align: center; }
-.round-summary.next-round-lobby { width: min(440px, calc(100vw - 24px)); max-height: calc(100dvh - 88px); overflow: hidden; overscroll-behavior: contain; }
+.round-summary.next-round-lobby { width: min(440px, calc(100vw - 24px)); max-height: calc(var(--app-height, 100dvh) - 88px); overflow: hidden; overscroll-behavior: contain; }
 .round-summary strong { display: -webkit-box; max-width: 280px; overflow: hidden; font-family: Georgia, serif; font-size: clamp(19px, 3vw, 28px); line-height: 1.02; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .round-summary small { margin-bottom: 3px; color: var(--muted); font-size: 10px; }
 .round-summary .loser-note { color: #ffaaa4; font-weight: 800; }
@@ -290,7 +302,7 @@ button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 .opening-guide .turn-countdown { min-width: 24px; margin: 0; color: var(--turn); font-size: 10px; font-weight: 850; }
 .opening-guide .primary-button { flex: 0 0 auto; padding: 7px 12px; font-size: 9px; }
 
-.lobby-card, .results-card { grid-row: 1 / -1; align-self: center; justify-self: center; width: min(560px, 100%); max-height: calc(100dvh - 84px); overflow: auto; padding: clamp(20px, 5vw, 50px); border: 1px solid rgba(214,218,255,.16); border-radius: 30px; background: radial-gradient(circle at top right, rgba(126,97,255,.2), transparent 40%), linear-gradient(150deg, rgba(38,45,137,.94), rgba(13,16,56,.97)); box-shadow: 0 35px 90px rgba(0,0,0,.4); }
+.lobby-card, .results-card { grid-row: 1 / -1; align-self: center; justify-self: center; width: min(560px, 100%); max-height: calc(var(--app-height, 100dvh) - 84px); overflow: auto; padding: clamp(20px, 5vw, 50px); border: 1px solid rgba(214,218,255,.16); border-radius: 30px; background: radial-gradient(circle at top right, rgba(126,97,255,.2), transparent 40%), linear-gradient(150deg, rgba(38,45,137,.94), rgba(13,16,56,.97)); box-shadow: 0 35px 90px rgba(0,0,0,.4); }
 .lobby-card { display: flex; flex-direction: column; overflow: hidden; }
 .results-card { width: min(940px, 100%); }
 .lobby-card h1, .results-card h1 { margin: 10px 0 12px; font-family: Georgia, serif; font-size: clamp(36px, 7vw, 58px); line-height: .98; letter-spacing: -.045em; }
@@ -325,7 +337,7 @@ button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 .connection-dot.open { background: #7ed8ed; } .connection-dot.connecting { background: var(--periwinkle); } .connection-dot.closed { background: var(--orange); }
 .build-status { position: fixed; z-index: 12; right: max(12px, env(safe-area-inset-right)); bottom: max(10px, env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 6px; color: rgba(167,172,210,.7); font-size: 9px; letter-spacing: .08em; pointer-events: none; }
 .build-status code { font: inherit; }
-.loading-screen { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 10px; }
+.loading-screen { min-height: var(--app-height, 100dvh); display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 10px; }
 .loading-screen h1 { margin: 8px 0 0; font-family: Georgia, serif; font-size: 38px; }
 .loading-screen p { margin: 0; color: var(--muted); font-size: 12px; }
 
@@ -365,6 +377,60 @@ button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
   .player-heading { margin-bottom: 4px; }
   .opponents-u .player-area { transform: none; margin-right: 0; }
 }
+
+/* visualViewport classes keep embedded panels and on-screen keyboards in sync
+   even when the browser's layout viewport does not change. */
+:root.viewport-compact .app-shell { padding-left: max(10px, env(safe-area-inset-left)); padding-right: max(10px, env(safe-area-inset-right)); }
+:root.viewport-compact .topbar { min-height: 44px; gap: 8px; }
+:root.viewport-compact .topbar-actions { gap: 6px; }
+:root.viewport-compact .next-round-popover { width: min(220px, calc(var(--app-width, 100vw) - 20px)); max-height: min(44vh, 320px); }
+:root.viewport-compact .game-surface.table-layout { grid-template-rows: minmax(0, 1fr) minmax(92px, auto) minmax(0, 1fr); gap: 4px; padding: 6px 0; }
+:root.viewport-compact .opponents-u { --table-card-width: clamp(26px, 6.5vmin, 38px); --table-card-gap: 3px; --table-player-pad-y: 3px; --table-player-pad-x: 4px; --table-heading-gap: 3px; --table-heading-size: 9px; --table-avatar-size: 20px; position: relative; inset: auto; grid-row: 1; align-self: start; display: flex; align-items: flex-start; justify-content: safe center; gap: clamp(4px, 1vmin, 8px); min-width: 0; min-height: 0; padding: clamp(4px, 1vmin, 8px) clamp(12px, 3vmin, 24px) clamp(7px, 1.5vmin, 12px); overflow-x: auto; overflow-y: hidden; scrollbar-width: none; pointer-events: auto; }
+:root.viewport-compact .opponents-u::-webkit-scrollbar { display: none; }
+:root.viewport-compact .opponents-u .player-area { position: relative; left: auto; top: auto; flex: 0 0 auto; transform: none; transform-origin: top center; margin-right: 0; pointer-events: auto; }
+:root.viewport-compact .opponents-u .player-heading b { max-width: 50px; }
+:root.viewport-compact .hands-strip .opponents-u .card-row { display: grid; grid-template-rows: repeat(2, calc(var(--table-card-width) * 1.4)); grid-auto-flow: column; grid-auto-columns: var(--table-card-width); gap: var(--table-card-gap); }
+:root.viewport-compact .player-area { max-width: 100%; }
+:root.viewport-compact .my-area { min-width: 0; align-self: end; transform: none !important; }
+:root.viewport-compact .kabo-button { padding: 7px 3px; font-size: clamp(12px, 2.3vmin, 15px); }
+:root.viewport-compact .round-summary { min-width: 220px; padding: 9px 13px; }
+:root.viewport-compact .ended-screen { place-items: start center; padding-top: 4px; }
+:root.viewport-compact .final-hands { grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); }
+
+:root.viewport-narrow .app-shell { padding-top: max(8px, env(safe-area-inset-top)); padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+:root.viewport-narrow .topbar { min-height: 60px; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: 34px 22px; align-items: center; gap: 2px 6px; }
+:root.viewport-narrow .room-chip { grid-column: 1; grid-row: 1; justify-self: start; max-width: 35vw; overflow: hidden; padding: 6px 9px; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+:root.viewport-narrow .topbar-actions { grid-column: 2; grid-row: 1; justify-self: end; gap: 4px; }
+:root.viewport-narrow .ghost-button { padding: 7px 9px; font-size: 10px; }
+:root.viewport-narrow .hand-layout-toggle { min-width: 42px; padding-inline: 7px; }
+:root.viewport-narrow .next-round-trigger { min-width: 42px; min-height: 30px; padding-inline: 7px; }
+:root.viewport-narrow .turn-prompt { position: relative; grid-column: 1 / -1; grid-row: 2; justify-self: center; left: auto; top: auto; max-width: calc(var(--app-width, 100vw) - 24px); transform: none; font-size: 9px; }
+:root.viewport-narrow .turn-prompt b { display: block; padding-block: 3px; }
+:root.viewport-narrow .game-surface.table-layout { grid-template-rows: minmax(0, 1fr) minmax(76px, auto) minmax(0, 1fr); padding-top: 2px; }
+:root.viewport-narrow .opponents-u { --opponent-columns: 4; --table-card-width: clamp(20px, 5.3vw, 25px); --table-card-gap: 2px; --table-player-pad-y: 1px; --table-player-pad-x: 2px; --table-heading-gap: 2px; --table-heading-size: 8px; --table-avatar-size: 17px; width: 100%; display: grid; grid-template-columns: repeat(var(--opponent-columns), max-content); grid-auto-rows: max-content; align-content: start; align-items: start; justify-content: center; gap: 2px clamp(2px, 1vw, 5px); padding: 2px 0 4px; overflow: visible; }
+:root.viewport-narrow .opponents-u.opponents-1 { --opponent-columns: 1; }
+:root.viewport-narrow .opponents-u.opponents-2 { --opponent-columns: 2; }
+:root.viewport-narrow .opponents-u.opponents-3 { --opponent-columns: 3; }
+:root.viewport-narrow .opponents-u .player-area { width: max-content; min-width: 0; }
+:root.viewport-narrow .opponents-u .player-heading { gap: 2px; margin-bottom: 1px; }
+:root.viewport-narrow .opponents-u .player-heading b { max-width: 28px; font-size: 8px; }
+:root.viewport-narrow .opponents-u .player-heading small { display: none; }
+:root.viewport-narrow .opponents-u .card-grid { gap: 0; }
+:root.viewport-narrow .opponents-u .card-row { gap: 2px; }
+:root.viewport-narrow .opponents-u .card-row + .card-row { margin-top: calc(var(--table-card-width) * -.38); margin-left: calc(var(--table-card-width) * .28); }
+:root.viewport-narrow .hands-strip .opponents-u .card-row { grid-template-rows: repeat(2, calc(var(--table-card-width) * 1.06)); row-gap: 0; }
+:root.viewport-narrow .my-area { gap: 3px; }
+:root.viewport-narrow .my-area .player-heading { margin-bottom: 3px; }
+:root.viewport-narrow .table-center { gap: 4px; }
+:root.viewport-narrow .ended-screen { overflow-x: hidden; }
+
+:root.viewport-short .app-shell { padding-top: max(7px, env(safe-area-inset-top)); padding-bottom: max(6px, env(safe-area-inset-bottom)); }
+:root.viewport-short .game-surface.table-layout { --table-card-width: clamp(30px, 8vmin, 35px); grid-template-rows: minmax(0, 1fr) minmax(68px, auto) minmax(0, 1fr); padding-block: 2px; }
+:root.viewport-short .opponents-u { --table-card-width: clamp(22px, 6vmin, 28px); padding-top: 1px; padding-bottom: 2px; }
+:root.viewport-short .player-heading { margin-bottom: 2px; }
+:root.viewport-short .pile-zone { gap: 4px; }
+:root.viewport-short .discard-wrap { gap: 3px; padding-top: 2px; }
+:root.viewport-short .build-status { bottom: 4px; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }

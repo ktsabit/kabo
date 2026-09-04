@@ -1,7 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 
 const matrix = [
+  { name: "small phone portrait", width: 320, height: 480 },
   { name: "phone portrait", width: 320, height: 568 },
+  { name: "modern phone portrait", width: 390, height: 667 },
+  { name: "tall phone portrait", width: 390, height: 844 },
   { name: "phone landscape", width: 844, height: 390 },
   { name: "tablet split", width: 768, height: 500 },
   { name: "Discord activity panel", width: 812, height: 660, noPileOverlap: true },
@@ -49,7 +52,7 @@ class RoomSocket {
       setTimeout(() => {
         this.waiters = this.waiters.filter((item) => item !== waiter);
         reject(new Error("room setup timed out"));
-      }, 5_000);
+      }, 10_000);
     });
   }
 
@@ -235,6 +238,41 @@ async function expectEveryOpponentFullyVisible(page: Page) {
   expect(clipped, "opponent hands are clipped by the activity viewport").toEqual([]);
 }
 
+async function expectOpponentHandsDoNotOverlap(page: Page) {
+  const overlaps = await page.evaluate(() => {
+    const areas = [...document.querySelectorAll<HTMLElement>(".opponents-u .player-area")]
+      .map((area) => ({ id: area.dataset.playerId ?? "unknown", rect: area.getBoundingClientRect() }));
+    const collisions: string[] = [];
+    for (let first = 0; first < areas.length; first += 1) {
+      for (let second = first + 1; second < areas.length; second += 1) {
+        const a = areas[first];
+        const b = areas[second];
+        const width = Math.min(a.rect.right, b.rect.right) - Math.max(a.rect.left, b.rect.left);
+        const height = Math.min(a.rect.bottom, b.rect.bottom) - Math.max(a.rect.top, b.rect.top);
+        if (width > 1 && height > 1) collisions.push(`${a.id}/${b.id}`);
+      }
+    }
+    return collisions;
+  });
+  expect(overlaps, "opponent hands overlap each other").toEqual([]);
+}
+
+async function expectOpponentLayoutContained(page: Page) {
+  const report = await page.locator(".opponents-u").evaluate((rail) => ({
+    clientWidth: rail.clientWidth,
+    scrollWidth: rail.scrollWidth,
+  }));
+  expect(report.scrollWidth - report.clientWidth, "opponent layout overflows horizontally").toBeLessThanOrEqual(1);
+}
+
+async function expectVisualViewportFilled(page: Page) {
+  const report = await page.evaluate(() => ({
+    viewportHeight: window.visualViewport?.height ?? window.innerHeight,
+    appHeight: document.querySelector<HTMLElement>(".app-shell")?.getBoundingClientRect().height ?? 0,
+  }));
+  expect(Math.abs(report.viewportHeight - report.appHeight), "table should fill the visual viewport").toBeLessThanOrEqual(1);
+}
+
 async function elementRect(page: Page, selector: string) {
   return page.locator(selector).evaluate((element) => {
     const rect = element.getBoundingClientRect();
@@ -285,22 +323,33 @@ test("eight-player table keeps all critical controls reachable", async ({ page }
     expect(progressAfter.width, "the top timer bar should drain").toBeLessThan(progressBefore.width);
     expect(progressAfter.color, "the top timer bar should change color").not.toBe(progressBefore.color);
     const firstHand = page.locator(".player-area").first().locator(".card-row");
-    await expect(firstHand).toHaveCount(1);
-    await page.getByRole("button", { name: "Switch to grid hand layout" }).click();
     await expect(firstHand).toHaveCount(2);
+    await page.getByRole("button", { name: "Switch to strip hand layout" }).click();
+    await expect(firstHand).toHaveCount(1);
+    await page.setViewportSize({ width: 320, height: 480 });
+    await expectEveryOpponentFullyVisible(page);
+    await expectOpponentHandsDoNotOverlap(page);
+    await expectOpponentLayoutContained(page);
+    await expectPileClearOfHands(page);
     await page.reload();
     await expect(page.locator(".game-surface.table-layout")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Switch to strip hand layout" })).toBeVisible();
-    await expect(page.locator(".player-area").first().locator(".card-row")).toHaveCount(2);
-    await page.getByRole("button", { name: "Switch to strip hand layout" }).click();
+    await expect(page.getByRole("button", { name: "Switch to grid hand layout" })).toBeVisible();
     await expect(page.locator(".player-area").first().locator(".card-row")).toHaveCount(1);
+    await page.getByRole("button", { name: "Switch to grid hand layout" }).click();
+    await expect(page.locator(".player-area").first().locator(".card-row")).toHaveCount(2);
     for (const viewport of matrix) {
       await test.step(viewport.name, async () => {
         await page.setViewportSize(viewport);
         await expectReachable(page, ".pile-zone");
         await expectReachable(page, ".my-area");
         await expectNoViewportCropping(page);
-        if ("noPileOverlap" in viewport) await expectPileClearOfHands(page);
+        await expectPileClearOfHands(page);
+        await expectEveryOpponentFullyVisible(page);
+        await expectOpponentHandsDoNotOverlap(page);
+        await expectOpponentLayoutContained(page);
+        await expectVisualViewportFilled(page);
+        const prompt = page.locator(".turn-prompt b");
+        if (await prompt.count()) await expect(prompt).toBeInViewport();
       });
     }
     for (const viewport of reportedActivityViewports) {
@@ -319,7 +368,7 @@ test("seven-player round summary keeps its heading visible in the reported portr
   const room = `reported-aftermath-${Date.now()}`;
   const clients = await startedRoom(room, 7);
   try {
-    clients[0].send({ type: "call_end" });
+    clients[Number(clients[0].latest.currentPlayerId.slice(1))].send({ type: "call_end" });
     await clients[0].waitFor((snapshot) => snapshot.phase === "ended");
     await page.setViewportSize({ width: 473, height: 667 });
     await page.goto(`/?room=${room}&user=p0&name=Player%200`);
@@ -378,7 +427,7 @@ test("round aftermath keeps ready and start controls reachable", async ({ page }
   const room = `aftermath-${Date.now()}`;
   const clients = await startedRoom(room, 2);
   try {
-    clients[0].send({ type: "call_end" });
+    clients[Number(clients[0].latest.currentPlayerId.slice(1))].send({ type: "call_end" });
     await clients[0].waitFor((snapshot) => snapshot.phase === "ended");
     await page.goto(`/?room=${room}&user=p0&name=Player%200`);
     await expect(page.locator(".round-summary.next-round-lobby")).toBeVisible();
@@ -482,6 +531,10 @@ test("a power-card swap completes as soon as the second card is selected", async
     await expect(page.locator(".selection-order")).toHaveText("1");
     await targets.nth(1).click();
     await expect(page.locator(".action-motion-layer .action-card-ghost")).toHaveCount(2);
+    await expect(page.locator(".action-motion-layer.motion-own-action.motion-swap")).toBeAttached();
+    await expect(page.locator(".action-motion-label")).toHaveText("YOU SWAP");
+    await expect(page.locator(".action-card-marker")).toHaveCount(4);
+    await expect(page.locator(".action-card-flight-badge")).toHaveText(["A", "B"]);
     const layoutAnimationProperties = await page.locator(".action-motion-layer").evaluate((layer) => {
       const layoutProperties = new Set(["left", "top", "right", "bottom", "width", "height"]);
       return layer.getAnimations({ subtree: true }).flatMap((animation) =>
@@ -521,6 +574,9 @@ test("a double-click still slaps during a power-card swap", async ({ page }) => 
       && ["slap", "late_slap", "wrong_slap"].includes(snapshot.action.kind),
     );
     expect(slap.action.kind).not.toBe("swap");
+    await expect(page.locator(`.action-motion-layer.motion-own-action.motion-${slap.action.kind}`)).toBeAttached();
+    await expect(page.locator(".action-motion-label")).toContainText(/YOU|YOUR/);
+    await expect(page.locator(".action-card-marker")).toHaveCount(2);
   } finally {
     clients.forEach((client) => client.close());
   }

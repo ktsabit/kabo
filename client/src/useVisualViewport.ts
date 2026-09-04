@@ -7,9 +7,14 @@ export function useVisualViewport(): void {
     const write = () => {
       frame = undefined;
       const height = viewport?.height ?? window.innerHeight;
+      const width = viewport?.width ?? window.innerWidth;
       const top = viewport?.offsetTop ?? 0;
       document.documentElement.style.setProperty("--app-height", `${Math.round(height)}px`);
+      document.documentElement.style.setProperty("--app-width", `${Math.round(width)}px`);
       document.documentElement.style.setProperty("--app-offset-top", `${Math.round(top)}px`);
+      document.documentElement.classList.toggle("viewport-compact", width <= 899 || height <= 620);
+      document.documentElement.classList.toggle("viewport-narrow", width <= 560);
+      document.documentElement.classList.toggle("viewport-short", height <= 430);
     };
     const schedule = () => {
       if (frame !== undefined) return;
@@ -24,6 +29,7 @@ export function useVisualViewport(): void {
       viewport?.removeEventListener("resize", schedule);
       viewport?.removeEventListener("scroll", schedule);
       if (frame !== undefined) window.cancelAnimationFrame(frame);
+      document.documentElement.classList.remove("viewport-compact", "viewport-narrow", "viewport-short");
     };
   }, []);
 }

@@ -25,9 +25,9 @@ const BUILD_VERSION = (import.meta.env.VITE_BUILD_VERSION || "local").slice(0, 5
 
 function savedHandLayout(): HandLayout {
   try {
-    return window.localStorage.getItem(HAND_LAYOUT_STORAGE_KEY) === "grid" ? "grid" : "strip";
+    return window.localStorage.getItem(HAND_LAYOUT_STORAGE_KEY) === "strip" ? "strip" : "grid";
   } catch {
-    return "strip";
+    return "grid";
   }
 }
 
@@ -94,7 +94,11 @@ function App() {
       setActionAnimating(true);
       setSnapshot(queued.snapshot);
     });
-    void actionMotion.current!.play(motion, heldActivePlayerID)
+    void actionMotion.current!.play(motion, {
+      activePlayerId: heldActivePlayerID,
+      viewerId: queued.snapshot.you.id,
+      actorName: queued.snapshot.players.find((player) => player.id === queued.action.actorId)?.name,
+    })
       .catch((error: unknown) => console.error("Kabo action animation failed", error))
       .finally(() => {
         if (epoch !== playbackEpoch.current) return;
