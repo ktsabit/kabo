@@ -831,7 +831,14 @@ func (g *Game) end(reason string) {
 		}
 	}
 	sort.Strings(g.WinnerIDs)
-	if g.CalledBy != "" && !g.kaboCallerHasLowestScore() {
+	if g.CalledBy != "" && !g.kaboCallerHasStrictLowestScore() {
+		// Matching the lowest score is not enough for a successful Kabo call.
+		// Leave the other lowest-scoring players as winners and make one of
+		// them the next starter; the caller alone loses the round.
+		g.WinnerIDs = removeString(g.WinnerIDs, g.CalledBy)
+		if len(g.WinnerIDs) > 0 {
+			g.NextStarterID = g.WinnerIDs[0]
+		}
 		g.LoserIDs = []string{g.CalledBy}
 		return
 	}
@@ -850,20 +857,29 @@ func (g *Game) end(reason string) {
 	sort.Strings(g.LoserIDs)
 }
 
-// A Kabo call succeeds when nobody else has a strictly lower score. Tied
-// lowest scores are therefore successful calls for every tied player.
-func (g *Game) kaboCallerHasLowestScore() bool {
+// A Kabo call succeeds only when the caller is the sole lowest scorer.
+func (g *Game) kaboCallerHasStrictLowestScore() bool {
 	caller := g.player(g.CalledBy)
 	if caller == nil {
 		return false
 	}
 	callerScore := playerScore(caller)
 	for _, player := range g.Players {
-		if player.ID != caller.ID && playerScore(player) < callerScore {
+		if player.ID != caller.ID && playerScore(player) <= callerScore {
 			return false
 		}
 	}
 	return true
+}
+
+func removeString(values []string, target string) []string {
+	filtered := values[:0]
+	for _, value := range values {
+		if value != target {
+			filtered = append(filtered, value)
+		}
+	}
+	return filtered
 }
 
 func containsString(values []string, target string) bool {

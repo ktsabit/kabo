@@ -267,7 +267,7 @@ func TestRoundResultMarksFailedKaboCaller(t *testing.T) {
 	}
 }
 
-func TestTiedLowestKaboCallerSucceeds(t *testing.T) {
+func TestTiedLowestKaboCallerLosesAndOtherTiedPlayerWins(t *testing.T) {
 	g := startedGame(t)
 	g.player("a").Cards = []*Card{{ID: "a4", Rank: 4, Suit: Clubs}}
 	g.player("b").Cards = []*Card{{ID: "b4", Rank: 4, Suit: Spades}}
@@ -288,10 +288,38 @@ func TestTiedLowestKaboCallerSucceeds(t *testing.T) {
 				t.Fatalf("Ada result = %+v", player)
 			}
 		case "b":
-			if !player.Winner || !player.CalledKabo || player.KaboFailed {
+			if player.Winner || !player.Loser || !player.CalledKabo || !player.KaboFailed {
 				t.Fatalf("tied Kabo caller result = %+v", player)
 			}
 		}
+	}
+	if g.NextStarterID != "a" {
+		t.Fatalf("next starter = %q, want tied non-caller a", g.NextStarterID)
+	}
+}
+
+func TestTiedLowestKaboCallerLosesToEveryOtherTiedPlayer(t *testing.T) {
+	g := startedGame(t)
+	g.player("a").Cards = []*Card{{ID: "a4", Rank: 4, Suit: Clubs}}
+	g.player("b").Cards = []*Card{{ID: "b4", Rank: 4, Suit: Spades}}
+	g.Players = append(g.Players, &Player{
+		ID:               "c",
+		Name:             "Cleo",
+		Connected:        true,
+		JoiningNextRound: true,
+		Cards:            []*Card{{ID: "c4", Rank: 4, Suit: Hearts}},
+	})
+	g.Current = 1
+	g.Phase = PhaseAwaitDraw
+
+	if err := g.Apply("b", ClientMessage{Type: "call_end"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(g.WinnerIDs) != 2 || g.WinnerIDs[0] != "a" || g.WinnerIDs[1] != "c" {
+		t.Fatalf("winners = %v, want [a c]", g.WinnerIDs)
+	}
+	if len(g.LoserIDs) != 1 || g.LoserIDs[0] != "b" {
+		t.Fatalf("losers = %v, want [b]", g.LoserIDs)
 	}
 }
 

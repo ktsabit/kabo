@@ -5,8 +5,10 @@ RUN npm ci
 COPY client ./
 COPY shared ../shared
 ARG VITE_DISCORD_CLIENT_ID
+ARG VITE_BUILD_VERSION
 ENV VITE_DISCORD_CLIENT_ID=$VITE_DISCORD_CLIENT_ID
-RUN npm run build
+ENV VITE_BUILD_VERSION=$VITE_BUILD_VERSION
+RUN test ${#VITE_BUILD_VERSION} -eq 5 && npm run build
 
 FROM golang:1.24-alpine AS server-build
 WORKDIR /src/server

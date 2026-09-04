@@ -72,7 +72,7 @@ Run the production image with Docker Compose:
 ```bash
 cp .env.example .env
 # Fill in the Discord values in .env on the VPS, then set ALLOW_GUESTS=false for production.
-docker compose up --build -d
+VITE_BUILD_VERSION=$(git rev-parse --short=5 HEAD) docker compose up --build -d
 ```
 
 The app is available at `http://localhost:8080`. Stop it with `docker compose down`. Round results persist in the `kabo-data` volume, while live rooms and sessions remain in memory.
@@ -80,7 +80,7 @@ The app is available at `http://localhost:8080`. Stop it with `docker compose do
 The Activity reads the public Discord Application ID from the running server, so it does not need to be baked into the browser bundle. A direct Docker build is enough:
 
 ```bash
-docker build -t kabo .
+docker build --build-arg VITE_BUILD_VERSION=$(git rev-parse --short=5 HEAD) -t kabo .
 ```
 
 Run the container with server-only secrets:
@@ -148,7 +148,7 @@ Discord Activities route network traffic through their proxy. WebSockets are sup
 - A successful slap wins the race for that discard and closes its slap slot. A later correct slap is revealed but not penalized; only a wrong rank or empty slot draws a penalty. If the successful slap targets an opponent, that gift is resolved after the race is already closed.
 - The active turn is completed before an empty draw pile ends the round, except when a penalty needs a card and none remains.
 - A round starts only when every selected player is connected and ready; the previous winner gets the first turn when they join the next round.
-- A failed Kabo call marks the caller as the loser even if another player has a higher score; the lowest score still determines the winner. A caller tied for the lowest score succeeds.
+- A Kabo call succeeds only when the caller is the sole lowest scorer. A caller tied for the lowest score loses; the other tied-lowest player or players win.
 
 ## Deliberately deferred
 

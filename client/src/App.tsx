@@ -45,6 +45,7 @@ type FlightSettle = {
 
 const DOUBLE_TAP_WINDOW = 360;
 const HAND_LAYOUT_STORAGE_KEY = "kabo-hand-layout";
+const BUILD_VERSION = (import.meta.env.VITE_BUILD_VERSION || "local").slice(0, 5);
 const activeActionAnimations = new Set<Animation>();
 
 function savedHandLayout(): HandLayout {
@@ -363,7 +364,7 @@ function App() {
         <div className="brand-mark bear-logo" role="img" aria-label="Kabo bear" />
         <h1>Kabo</h1>
         <p>{problem ?? "Pulling up a seat…"}</p>
-        <span className={`connection-dot ${connection}`} />
+        <BuildStatus connection={connection} />
       </main>
     );
   }
@@ -485,6 +486,8 @@ function App() {
         )}
       </section>
 
+      <PeekRevealSpotlight snapshot={snapshot} />
+
       {connection !== "open" && (
         <div className="reconnect-banner" role="status" aria-live="polite">
           <span className={`connection-dot ${connection}`} />
@@ -493,8 +496,35 @@ function App() {
       )}
       {problem && <div className="toast error" role="alert">{problem}</div>}
       {notice && <div className="toast">{notice}</div>}
-      <span className={`connection-dot table-connection ${connection}`} aria-label={connection === "open" ? "Connected" : "Reconnecting"} />
+      <BuildStatus connection={connection} />
     </main>
+  );
+}
+
+function BuildStatus({ connection }: { connection: ConnectionState }) {
+  return (
+    <div className="build-status" title={`Build ${BUILD_VERSION}`}>
+      <code>{BUILD_VERSION}</code>
+      <span className={`connection-dot ${connection}`} aria-label={connection === "open" ? "Connected" : "Reconnecting"} />
+    </div>
+  );
+}
+
+function PeekRevealSpotlight({ snapshot }: { snapshot: SnapshotMessage }) {
+  if (!snapshot.reveal || snapshot.reveal.kind === "initial") return null;
+  return (
+    <div className="peek-reveal-overlay" role="status" aria-label="Revealed card">
+      {snapshot.reveal.cards.map(({ target, card }) => {
+        const owner = snapshot.players.find((player) => player.id === target.playerId);
+        const ownerName = target.playerId === snapshot.you.id ? "Your" : `${owner?.name ?? "Player"}'s`;
+        return (
+          <div className="peek-reveal-spotlight" key={refKey(target)}>
+            <PlayingCard card={card} compact flipped />
+            <span>{ownerName} card {target.slot + 1}</span>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -890,7 +920,9 @@ function rosterName(snapshot: SnapshotMessage, id: string): string | undefined {
 }
 
 function uSeatStyle(index: number, total: number): CSSProperties {
-  const spread = total <= 1 ? 0 : total === 2 ? 36 : total === 3 ? 64 : 84;
+  // Four or more wide hands need a larger edge gutter than their center
+  // points suggest, especially inside Discord's high-DPI activity panels.
+  const spread = total <= 1 ? 0 : total === 2 ? 36 : total === 3 ? 64 : 72;
   const x = total <= 1 ? 50 : 50 - spread / 2 + (spread * index) / (total - 1);
   const edge = Math.abs(x - 50) / Math.max(spread / 2, 1);
   const y = 20 + 25 * edge ** 1.55;

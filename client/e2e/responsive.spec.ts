@@ -10,6 +10,13 @@ const matrix = [
   { name: "desktop", width: 1920, height: 1080 },
 ] as const;
 
+const reportedActivityViewports = [
+  // The supplied screenshots are Retina captures, so these are their CSS
+  // viewport sizes rather than their physical PNG dimensions.
+  { name: "reported wide activity", width: 1180, height: 820 },
+  { name: "reported short activity", width: 755, height: 373 },
+] as const;
+
 class RoomSocket {
   readonly socket: WebSocket;
   latest: any;
@@ -114,6 +121,64 @@ async function advanceToSwap(clients: RoomSocket[]) {
   throw new Error("did not draw a swap power card");
 }
 
+async function advancePlayerToReveal(page: Page, clients: RoomSocket[], playerId: string) {
+  for (let step = 0; step < 180; step += 1) {
+    // Use another player's socket as the authoritative observer because the
+    // browser connection replaces the test socket for playerId.
+    const observer = clients.find((_, index) => `p${index}` !== playerId)!;
+    const snapshot = observer.latest;
+    const actorId = snapshot.currentPlayerId;
+    const actor = clients[Number(actorId.slice(1))];
+    if (snapshot.phase.startsWith("reveal_")) {
+      if (actorId === playerId) return snapshot;
+      actor.send({ type: "acknowledge_reveal" });
+      await observer.waitFor((next) => !next.phase.startsWith("reveal_"));
+      continue;
+    }
+    if (snapshot.phase === "await_draw") {
+      if (actorId === playerId) await page.locator(".deck").click();
+      else actor.send({ type: "draw" });
+      await observer.waitFor((next) => next.phase !== "await_draw");
+      continue;
+    }
+    if (snapshot.phase === "await_choice") {
+      if (actorId === playerId) await page.locator(".discard-wrap.can-discard").click();
+      else actor.send({ type: "discard_drawn" });
+      await observer.waitFor((next) => next.phase !== "await_choice");
+      continue;
+    }
+    if (snapshot.phase === "await_self_peek") {
+      if (actorId === playerId) await page.locator(".power-target .card-button").first().click();
+      else actor.send({ type: "peek", target: firstOccupied(snapshot, actorId) });
+      await observer.waitFor((next) => next.phase === "reveal_self");
+      continue;
+    }
+    if (snapshot.phase === "await_opponent_peek" || snapshot.phase === "await_king_peek") {
+      const opponentId = snapshot.players.find((player: any) => player.id !== actorId).id;
+      if (actorId === playerId) await page.locator(".power-target .card-button").first().click();
+      else actor.send({ type: "peek", target: firstOccupied(snapshot, opponentId) });
+      await observer.waitFor((next) => next.phase.startsWith("reveal_"));
+      continue;
+    }
+    if (snapshot.phase === "await_swap") {
+      if (actorId === playerId) {
+        const targets = page.locator(".power-target .card-button");
+        await targets.nth(0).click();
+        await targets.nth(1).click();
+      } else {
+        const occupied = snapshot.players.flatMap((player: any) => player.cards
+          .filter((card: any) => card.occupied)
+          .map((card: any) => ({ playerId: player.id, slot: card.slot })));
+        actor.send({ type: "swap", first: occupied[0], second: occupied[1] });
+      }
+      await observer.waitFor((next) => next.phase !== "await_swap");
+      continue;
+    }
+    throw new Error(`unexpected phase while seeking reveal: ${snapshot.phase}`);
+  }
+  throw new Error(`did not reach a reveal for ${playerId}`);
+}
+
 async function expectReachable(page: Page, selector: string) {
   const element = page.locator(selector).first();
   await expect(element).toBeVisible();
@@ -150,6 +215,26 @@ async function expectPileClearOfHands(page: Page) {
   expect(overlaps, "draw and discard piles overlap a player's hand").toEqual([]);
 }
 
+async function expectEveryOpponentFullyVisible(page: Page) {
+  const clipped = await page.evaluate(() => {
+    const viewport = { left: 0, top: 0, right: document.documentElement.clientWidth, bottom: document.documentElement.clientHeight };
+    const rail = document.querySelector<HTMLElement>(".opponents-u")?.getBoundingClientRect();
+    return [...document.querySelectorAll<HTMLElement>(".opponents-u .player-area")]
+      .flatMap((area) => {
+        const areaRect = area.getBoundingClientRect();
+        const cards = [...area.querySelectorAll<HTMLElement>(".card-back, .playing-card")];
+        const rects = [areaRect, ...cards.map((card) => card.getBoundingClientRect())];
+        const bounds = rail && getComputedStyle(document.querySelector<HTMLElement>(".opponents-u")!).position === "relative"
+          ? { left: Math.max(viewport.left, rail.left), top: Math.max(viewport.top, rail.top), right: Math.min(viewport.right, rail.right), bottom: Math.min(viewport.bottom, rail.bottom) }
+          : viewport;
+        return rects.some((rect) => rect.left < bounds.left - 1 || rect.right > bounds.right + 1 || rect.top < bounds.top - 1 || rect.bottom > bounds.bottom + 1)
+          ? [area.dataset.playerId ?? "unknown player"]
+          : [];
+      });
+  });
+  expect(clipped, "opponent hands are clipped by the activity viewport").toEqual([]);
+}
+
 async function elementRect(page: Page, selector: string) {
   return page.locator(selector).evaluate((element) => {
     const rect = element.getBoundingClientRect();
@@ -167,6 +252,7 @@ function expectStableRect(before: Awaited<ReturnType<typeof elementRect>>, after
 test("lobby ready control remains reachable across the viewport matrix", async ({ page }) => {
   await page.goto(`/?room=lobby-${Date.now()}&user=matrix-lobby&name=Matrix`);
   await expect(page.locator(".lobby-card")).toBeVisible();
+  await expect(page.locator(".build-status code")).toHaveText(/^[0-9a-f]{5}$/);
   for (const viewport of matrix) {
     await test.step(viewport.name, async () => {
       await page.setViewportSize(viewport);
@@ -204,6 +290,66 @@ test("eight-player table keeps all critical controls reachable", async ({ page }
         if ("noPileOverlap" in viewport) await expectPileClearOfHands(page);
       });
     }
+    for (const viewport of reportedActivityViewports) {
+      await test.step(viewport.name, async () => {
+        await page.setViewportSize(viewport);
+        await expectEveryOpponentFullyVisible(page);
+        await expectNoViewportCropping(page);
+      });
+    }
+  } finally {
+    clients.forEach((client) => client.close());
+  }
+});
+
+test("seven-player round summary keeps its heading visible in the reported portrait activity", async ({ page }) => {
+  const room = `reported-aftermath-${Date.now()}`;
+  const clients = await startedRoom(room, 7);
+  try {
+    clients[0].send({ type: "call_end" });
+    await clients[0].waitFor((snapshot) => snapshot.phase === "ended");
+    await page.setViewportSize({ width: 473, height: 667 });
+    await page.goto(`/?room=${room}&user=p0&name=Player%200`);
+    const summary = page.locator(".round-summary.next-round-lobby");
+    await expect(summary).toBeVisible();
+    await summary.locator(".ready-toggle").click();
+    await expect(summary.locator(".eyebrow")).toBeInViewport();
+    await expect(summary.locator(".final-hands")).toBeInViewport();
+    await expect(summary.locator(".ready-roster")).toBeInViewport();
+    await expectNoViewportCropping(page);
+    const scrollTop = await summary.evaluate((element) => element.scrollTop);
+    expect(scrollTop, "the summary scrolled its heading out of view").toBe(0);
+  } finally {
+    clients.forEach((client) => client.close());
+  }
+});
+
+test("zoomed reveal stays fully visible in a compact activity viewport", async ({ page }) => {
+  const room = `reported-reveal-${Date.now()}`;
+  const clients = await startedRoom(room, 2);
+  try {
+    await page.setViewportSize({ width: 755, height: 373 });
+    await page.goto(`/?room=${room}&user=p0&name=Player%200`);
+    await advancePlayerToReveal(page, clients, "p0");
+    const spotlight = page.locator(".peek-reveal-spotlight");
+    await expect(spotlight).toBeVisible();
+    await spotlight.locator(".playing-card").evaluate(async (card) => {
+      await Promise.all(card.getAnimations().map((animation) => animation.finished));
+    });
+    const geometry = await page.evaluate(() => {
+      const card = document.querySelector<HTMLElement>(".peek-reveal-spotlight .playing-card")!.getBoundingClientRect();
+      const source = document.querySelector<HTMLElement>(".slot-wrap.peek-reveal .playing-card")!.getBoundingClientRect();
+      return {
+        card: { left: card.left, top: card.top, right: card.right, bottom: card.bottom, width: card.width },
+        sourceWidth: source.width,
+        viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight },
+      };
+    });
+    expect(geometry.card.left).toBeGreaterThanOrEqual(0);
+    expect(geometry.card.top).toBeGreaterThanOrEqual(0);
+    expect(geometry.card.right).toBeLessThanOrEqual(geometry.viewport.width);
+    expect(geometry.card.bottom).toBeLessThanOrEqual(geometry.viewport.height);
+    expect(geometry.card.width, "the reveal should be visibly zoomed").toBeGreaterThan(geometry.sourceWidth * 1.5);
   } finally {
     clients.forEach((client) => client.close());
   }

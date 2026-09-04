@@ -1,5 +1,7 @@
 import { defineConfig } from "@playwright/test";
 
+const chromiumExecutable = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
+
 export default defineConfig({
   testDir: "./e2e",
   timeout: 45_000,
@@ -9,6 +11,7 @@ export default defineConfig({
   use: {
     baseURL: "http://127.0.0.1:4174",
     browserName: "chromium",
+    launchOptions: chromiumExecutable ? { executablePath: chromiumExecutable } : undefined,
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
   },

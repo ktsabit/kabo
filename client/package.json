@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
+    "dev": "VITE_BUILD_VERSION=${VITE_BUILD_VERSION:-$(git rev-parse --short=5 HEAD)} vite",
+    "build": "tsc -b && VITE_BUILD_VERSION=${VITE_BUILD_VERSION:-$(git rev-parse --short=5 HEAD)} vite build",
     "test": "vitest run --config vitest.config.ts",
     "test:responsive": "playwright test"
   },
