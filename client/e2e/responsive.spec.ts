@@ -324,24 +324,27 @@ test("seven-player round summary keeps its heading visible in the reported portr
   }
 });
 
-test("zoomed reveal stays fully visible in a compact activity viewport", async ({ page }) => {
+test("reveal flips the normal card in place in a compact activity viewport", async ({ page }) => {
   const room = `reported-reveal-${Date.now()}`;
   const clients = await startedRoom(room, 2);
   try {
     await page.setViewportSize({ width: 755, height: 373 });
     await page.goto(`/?room=${room}&user=p0&name=Player%200`);
     await advancePlayerToReveal(page, clients, "p0");
-    const spotlight = page.locator(".peek-reveal-spotlight");
-    await expect(spotlight).toBeVisible();
-    await spotlight.locator(".playing-card").evaluate(async (card) => {
-      await Promise.all(card.getAnimations().map((animation) => animation.finished));
+    const revealedSlot = page.locator(".slot-wrap.peek-reveal");
+    await expect(revealedSlot).toBeVisible();
+    await expect(page.locator(".peek-reveal-overlay")).toHaveCount(0);
+    const card = revealedSlot.locator(".peek-card.revealed");
+    await expect(card).toBeVisible();
+    await card.evaluate(async (element) => {
+      await Promise.all(element.getAnimations({ subtree: true }).map((animation) => animation.finished));
     });
     const geometry = await page.evaluate(() => {
-      const card = document.querySelector<HTMLElement>(".peek-reveal-spotlight .playing-card")!.getBoundingClientRect();
-      const source = document.querySelector<HTMLElement>(".slot-wrap.peek-reveal .playing-card")!.getBoundingClientRect();
+      const card = document.querySelector<HTMLElement>(".slot-wrap.peek-reveal .peek-card")!.getBoundingClientRect();
+      const slot = document.querySelector<HTMLElement>(".slot-wrap.peek-reveal")!.getBoundingClientRect();
       return {
-        card: { left: card.left, top: card.top, right: card.right, bottom: card.bottom, width: card.width },
-        sourceWidth: source.width,
+        card: { left: card.left, top: card.top, right: card.right, bottom: card.bottom, width: card.width, height: card.height },
+        slot: { left: slot.left, top: slot.top, width: slot.width, height: slot.height },
         viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight },
       };
     });
@@ -349,7 +352,10 @@ test("zoomed reveal stays fully visible in a compact activity viewport", async (
     expect(geometry.card.top).toBeGreaterThanOrEqual(0);
     expect(geometry.card.right).toBeLessThanOrEqual(geometry.viewport.width);
     expect(geometry.card.bottom).toBeLessThanOrEqual(geometry.viewport.height);
-    expect(geometry.card.width, "the reveal should be visibly zoomed").toBeGreaterThan(geometry.sourceWidth * 1.5);
+    expect(geometry.card.width).toBeCloseTo(geometry.slot.width, 1);
+    expect(geometry.card.height).toBeCloseTo(geometry.slot.height, 1);
+    expect(geometry.card.left).toBeCloseTo(geometry.slot.left, 1);
+    expect(geometry.card.top).toBeCloseTo(geometry.slot.top, 1);
   } finally {
     clients.forEach((client) => client.close());
   }

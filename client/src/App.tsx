@@ -486,8 +486,6 @@ function App() {
         )}
       </section>
 
-      <PeekRevealSpotlight snapshot={snapshot} />
-
       {connection !== "open" && (
         <div className="reconnect-banner" role="status" aria-live="polite">
           <span className={`connection-dot ${connection}`} />
@@ -506,24 +504,6 @@ function BuildStatus({ connection }: { connection: ConnectionState }) {
     <div className="build-status" title={`Build ${BUILD_VERSION}`}>
       <code>{BUILD_VERSION}</code>
       <span className={`connection-dot ${connection}`} aria-label={connection === "open" ? "Connected" : "Reconnecting"} />
-    </div>
-  );
-}
-
-function PeekRevealSpotlight({ snapshot }: { snapshot: SnapshotMessage }) {
-  if (!snapshot.reveal || snapshot.reveal.kind === "initial") return null;
-  return (
-    <div className="peek-reveal-overlay" role="status" aria-label="Revealed card">
-      {snapshot.reveal.cards.map(({ target, card }) => {
-        const owner = snapshot.players.find((player) => player.id === target.playerId);
-        const ownerName = target.playerId === snapshot.you.id ? "Your" : `${owner?.name ?? "Player"}'s`;
-        return (
-          <div className="peek-reveal-spotlight" key={refKey(target)}>
-            <PlayingCard card={card} compact flipped />
-            <span>{ownerName} card {target.slot + 1}</span>
-          </div>
-        );
-      })}
     </div>
   );
 }
@@ -714,7 +694,6 @@ function PlayerArea({ player, handLayout, snapshot, selected, onCard, onSlap, on
     tap.current = { key, at: now, timer };
   };
 
-  const hasPeekReveal = snapshot.reveal?.kind !== "initial" && Boolean(snapshot.reveal?.cards.some((item) => item.target.playerId === player.id));
   const penaltyPending = snapshot.phase !== "ended" && snapshot.action?.kind === "wrong_slap" && snapshot.action.actorId === player.id;
   const winner = revealEnded && snapshot.phase === "ended" && snapshot.winnerIds?.includes(player.id);
   const arrangedRows = handLayout === "strip"
@@ -723,7 +702,7 @@ function PlayerArea({ player, handLayout, snapshot, selected, onCard, onSlap, on
       .filter((slot) => handVisualRow(slot.slot) === row)
       .sort((a, b) => handVisualColumn(a.slot) - handVisualColumn(b.slot)));
   return (
-    <section ref={area} data-player-id={player.id} style={style} className={`player-area ${mine ? "mine" : ""} ${active ? "active" : ""} ${!player.connected ? "disconnected" : ""} ${winner ? "winner" : ""} ${hasPeekReveal ? "has-peek-reveal" : ""} ${revealEnded && snapshot.phase === "ended" ? "cards-revealed" : ""} ${snapshot.phase === "await_choice" && mine ? "replace-mode" : ""}`}>
+    <section ref={area} data-player-id={player.id} style={style} className={`player-area ${mine ? "mine" : ""} ${active ? "active" : ""} ${!player.connected ? "disconnected" : ""} ${winner ? "winner" : ""} ${revealEnded && snapshot.phase === "ended" ? "cards-revealed" : ""} ${snapshot.phase === "await_choice" && mine ? "replace-mode" : ""}`}>
       <div className="player-heading">
         <span className={`avatar avatar-${hash(player.id) % 5}`}>{player.name.slice(0, 1).toUpperCase()}</span>
         <div><b title={player.name}>{mine ? "You" : player.name}</b>{revealEnded && snapshot.phase === "ended" ? <small>{player.score} pts</small> : !player.connected && <small>Disconnected</small>}</div>
