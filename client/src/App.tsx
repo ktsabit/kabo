@@ -391,6 +391,7 @@ function App() {
     <main className="app-shell">
       <header className="topbar">
         <div className="room-chip">Table <b>{platform.roomId.slice(-8)}</b></div>
+        {!showingAftermath && <TurnPrompt snapshot={snapshot} isMyTurn={isMyTurn} />}
         <div className="topbar-actions">
           {snapshot.phase !== "lobby" && (
             <button
@@ -469,7 +470,6 @@ function App() {
                       <small>DISCARD</small>
                     </div>
                   </div>
-                  <TurnPrompt snapshot={snapshot} isMyTurn={isMyTurn} />
                 </>
               )}
             </div>
@@ -758,7 +758,6 @@ function PlayerArea({ player, handLayout, snapshot, selected, onCard, onSlap, on
                       : <div className="empty-slot" />}
                   </button>
                   {isSelected && <span className="selection-order" aria-hidden="true">{selectionOrder}</span>}
-                  {initialRevealHere && revealed && <span className="opening-card-marker">Card {slot.slot + 1}</span>}
                   {giftMode && slot.occupied && (
                     <button className="gift-button" onClick={() => onGift(slot.slot)}>GIVE</button>
                   )}
@@ -772,7 +771,7 @@ function PlayerArea({ player, handLayout, snapshot, selected, onCard, onSlap, on
       </div>
       {initialRevealHere && onInitialDone && (
         <div className="opening-guide" role="status">
-          <span><b>Remember cards 3 &amp; 4</b><small>These faces are shown in their real positions.</small></span>
+          <b>Memorize</b>
           <TurnCountdown deadlineAt={snapshot.deadlineAt} />
           <button className="primary-button" onClick={onInitialDone}>Ready</button>
         </div>
@@ -782,18 +781,40 @@ function PlayerArea({ player, handLayout, snapshot, selected, onCard, onSlap, on
 }
 
 function TurnPrompt({ snapshot, isMyTurn }: { snapshot: SnapshotMessage; isMyTurn: boolean }) {
-  const canGift = snapshot.phase === "await_gift" && snapshot.pendingGift?.slapperId === snapshot.you.id;
   let action = "";
   if (snapshot.phase === "await_draw") action = "Draw";
   if (snapshot.phase === "await_choice") action = "Choose";
   if (snapshot.phase === "await_self_peek" || snapshot.phase === "await_opponent_peek" || snapshot.phase === "await_king_peek") action = "Peek";
-  if (snapshot.phase === "await_swap") action = isMyTurn ? "Select 2 cards — swap is automatic" : "Choosing 2 cards";
+  if (snapshot.phase === "await_swap") action = isMyTurn ? "Select 2 to swap" : "Choosing cards";
   if (snapshot.phase === "await_gift") action = "Give";
   if (!action) return null;
-  const activeName = snapshot.players.find((player) => player.id === snapshot.currentPlayerId)?.name ?? "Player";
-  let prompt = isMyTurn ? action : `${activeName} · ${action}`;
-  if (canGift) prompt = "Give";
-  return <div className="turn-prompt"><span className={isMyTurn || canGift ? "pulse" : ""} /><b>{prompt}</b><TurnCountdown deadlineAt={snapshot.deadlineAt} /></div>;
+  return <div className="turn-prompt"><TurnProgress deadlineAt={snapshot.deadlineAt} /><b>{action}</b></div>;
+}
+
+function TurnProgress({ deadlineAt }: { deadlineAt?: number }) {
+  const [remainingMs, setRemainingMs] = useState<number>();
+
+  useEffect(() => {
+    if (!deadlineAt) {
+      setRemainingMs(undefined);
+      return;
+    }
+    const update = () => setRemainingMs(Math.max(0, deadlineAt - Date.now()));
+    update();
+    const timer = window.setInterval(update, 100);
+    return () => window.clearInterval(timer);
+  }, [deadlineAt]);
+
+  if (remainingMs === undefined) return null;
+  const progress = Math.min(1, remainingMs / 15_000);
+  const hue = progress > .5 ? 42 + (progress - .5) * 200 : 4 + progress * 76;
+  const color = `hsl(${hue} 78% 57%)`;
+  const seconds = Math.ceil(remainingMs / 1_000);
+  return (
+    <time className="turn-progress" aria-label={`${seconds} seconds remaining`}>
+      <span style={{ transform: `scaleX(${progress})`, backgroundColor: color, color }} />
+    </time>
+  );
 }
 
 function TurnCountdown({ deadlineAt }: { deadlineAt?: number }) {

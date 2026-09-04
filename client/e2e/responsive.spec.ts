@@ -271,6 +271,19 @@ test("eight-player table keeps all critical controls reachable", async ({ page }
     await expect(page.locator(".game-surface.table-layout")).toBeVisible();
     await expect(page.locator(".reconnect-banner")).toBeHidden();
     await expect(page.locator(".slap-button")).toHaveCount(0);
+    const turnProgress = page.locator(".turn-progress");
+    await expect(turnProgress).toBeVisible();
+    const progressBefore = await turnProgress.locator("span").evaluate((element) => ({
+      width: element.getBoundingClientRect().width,
+      color: getComputedStyle(element).backgroundColor,
+    }));
+    await page.waitForTimeout(350);
+    const progressAfter = await turnProgress.locator("span").evaluate((element) => ({
+      width: element.getBoundingClientRect().width,
+      color: getComputedStyle(element).backgroundColor,
+    }));
+    expect(progressAfter.width, "the top timer bar should drain").toBeLessThan(progressBefore.width);
+    expect(progressAfter.color, "the top timer bar should change color").not.toBe(progressBefore.color);
     const firstHand = page.locator(".player-area").first().locator(".card-row");
     await expect(firstHand).toHaveCount(1);
     await page.getByRole("button", { name: "Switch to grid hand layout" }).click();
@@ -400,7 +413,8 @@ test("each player sees the private opening cards in their real hand positions", 
     await expect(myHand.locator(".playing-card")).toHaveCount(2);
     await expect(myHand.locator('[data-card-ref="p0:0"] .playing-card, [data-card-ref="p0:1"] .playing-card')).toHaveCount(0);
     await expect(myHand.locator('[data-card-ref="p0:2"] .playing-card, [data-card-ref="p0:3"] .playing-card')).toHaveCount(2);
-    await expect(myHand.locator(".opening-card-marker")).toHaveText(["Card 3", "Card 4"]);
+    await expect(myHand.locator(".opening-card-marker")).toHaveCount(0);
+    await expect(myHand.locator(".opening-guide")).toContainText("Memorize");
     await expect(myHand.locator(".opening-guide .turn-countdown")).toContainText(/\d+s/);
     for (const viewport of matrix) {
       await test.step(`opening reveal · ${viewport.name}`, async () => {
@@ -414,7 +428,7 @@ test("each player sees the private opening cards in their real hand positions", 
     await clients[1].waitFor((snapshot) => snapshot.phase === "initial_peek" && snapshot.players?.find((player: any) => player.id === "p0")?.initialReady === true);
     clients[1].send({ type: "acknowledge_initial" });
     await clients[1].waitFor((snapshot) => snapshot.phase === "await_draw");
-    await expect(page.locator(".turn-prompt .turn-countdown")).toContainText(/\d+s/);
+    await expect(page.locator(".turn-prompt .turn-progress")).toHaveAttribute("aria-label", /\d+ seconds remaining/);
   } finally {
     clients.forEach((client) => client.close());
   }
@@ -460,7 +474,7 @@ test("a power-card swap completes as soon as the second card is selected", async
     const actorId = swap.currentPlayerId;
     const observer = clients[actorId === "p0" ? 1 : 0];
     await page.goto(`/?room=${room}&user=${actorId}&name=${actorId === "p0" ? "Player%200" : "Player%201"}`);
-    await expect(page.getByText("Select 2 cards — swap is automatic")).toBeVisible();
+    await expect(page.getByText("Select 2 to swap")).toBeVisible();
     await expect(page.getByRole("button", { name: /confirm swap/i })).toHaveCount(0);
     const targets = page.locator(".power-target .card-button");
     expect(await targets.count()).toBeGreaterThanOrEqual(2);
