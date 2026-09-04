@@ -355,7 +355,7 @@ export class ActionMotionDirector {
     }));
     const options: KeyframeAnimationOptions = {
       duration: mounted.cue.returnDurationMs ?? mounted.cue.durationMs,
-      delay: 55,
+      delay: mounted.cue.returnDelayMs ?? 55,
       easing: "linear",
       fill: "forwards",
     };
@@ -392,7 +392,10 @@ export class ActionMotionDirector {
   private async playPenalty(root: HTMLElement, playerId: string): Promise<void> {
     const area = [...root.querySelectorAll<HTMLElement>(".player-area")].find((item) => item.dataset.playerId === playerId);
     if (!area) return;
-    area.querySelector<HTMLElement>(".penalty-card-pending")?.classList.add("penalty-arriving");
+    const penalty = area.querySelector<HTMLElement>(".penalty-card-pending");
+    penalty?.classList.add("penalty-arriving");
+    if (penalty) void penalty.offsetWidth;
+    const arrivalAnimations = penalty?.getAnimations() ?? [];
     const rect = area.getBoundingClientRect();
     const flash = document.createElement("div");
     flash.className = "slap-flash";
@@ -409,7 +412,7 @@ export class ActionMotionDirector {
         { translate: "0 0" },
       ], { duration: 340, easing: "ease-out" }),
     ];
-    await waitForAnimations(animations);
+    await Promise.all([waitForAnimations(animations), waitForAnimations(arrivalAnimations)]);
     flash.remove();
   }
 

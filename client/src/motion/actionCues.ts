@@ -8,6 +8,7 @@ export const MOTION_TIMING = {
   slapMs: 390,
   giftMs: 400,
   rejectedSlapOutMs: 320,
+  rejectedSlapHoldMs: 700,
   rejectedSlapReturnMs: 420,
   compactMs: 220,
 } as const;
@@ -35,6 +36,7 @@ export type CardFlightCue = {
   flipToBack?: boolean;
   handoff: boolean;
   returnToSource?: boolean;
+  returnDelayMs?: number;
   returnDurationMs?: number;
   className?: string;
 };
@@ -141,6 +143,7 @@ export function planActionMotion(action: ActionView): ActionMotionPlan {
           tilt: 9,
           handoff: false,
           returnToSource: true,
+          returnDelayMs: MOTION_TIMING.rejectedSlapHoldMs,
           returnDurationMs: MOTION_TIMING.rejectedSlapReturnMs,
           className: action.kind === "wrong_slap" ? "wrong-slap-flight" : "late-slap-flight",
         })],

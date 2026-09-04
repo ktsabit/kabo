@@ -151,15 +151,21 @@ async function advancePlayerToReveal(page: Page, clients: RoomSocket[], playerId
       continue;
     }
     if (snapshot.phase === "await_self_peek") {
-      if (actorId === playerId) await page.locator(".power-target .card-button").first().click();
-      else actor.send({ type: "peek", target: firstOccupied(snapshot, actorId) });
+      if (actorId === playerId) {
+        const target = page.locator(".power-target .card-button").first();
+        await target.click();
+        await expect(target.locator("..")).toHaveClass(/tap-pending/);
+      } else actor.send({ type: "peek", target: firstOccupied(snapshot, actorId) });
       await observer.waitFor((next) => next.phase === "reveal_self");
       continue;
     }
     if (snapshot.phase === "await_opponent_peek" || snapshot.phase === "await_king_peek") {
       const opponentId = snapshot.players.find((player: any) => player.id !== actorId).id;
-      if (actorId === playerId) await page.locator(".power-target .card-button").first().click();
-      else actor.send({ type: "peek", target: firstOccupied(snapshot, opponentId) });
+      if (actorId === playerId) {
+        const target = page.locator(".power-target .card-button").first();
+        await target.click();
+        await expect(target.locator("..")).toHaveClass(/tap-pending/);
+      } else actor.send({ type: "peek", target: firstOccupied(snapshot, opponentId) });
       await observer.waitFor((next) => next.phase.startsWith("reveal_"));
       continue;
     }
@@ -355,10 +361,13 @@ test("eight-player table keeps all critical controls reachable", async ({ page }
     expect(progressAfter.width, "the top timer bar should drain").toBeLessThan(progressBefore.width);
     expect(progressAfter.left + progressAfter.width / 2, "the timer should drain toward the middle").toBeCloseTo(progressBefore.left + progressBefore.width / 2, 0);
     expect(progressAfter.color, "the top timer bar should change color").not.toBe(progressBefore.color);
-    const firstHand = page.locator(".player-area").first().locator(".card-row");
-    await expect(firstHand).toHaveCount(2);
+    const ownHand = page.locator(".my-area .player-area .card-row");
+    const firstOpponentHand = page.locator(".opponents-u .player-area").first().locator(".card-row");
+    await expect(ownHand).toHaveCount(2);
+    await expect(firstOpponentHand).toHaveCount(2);
     await page.getByRole("button", { name: "Switch to strip hand layout" }).click();
-    await expect(firstHand).toHaveCount(1);
+    await expect(ownHand).toHaveCount(1);
+    await expect(firstOpponentHand).toHaveCount(2);
     await resizeViewport(page, { width: 320, height: 480 });
     await expectEveryOpponentFullyVisible(page);
     await expectOpponentHandsDoNotOverlap(page);
@@ -367,9 +376,11 @@ test("eight-player table keeps all critical controls reachable", async ({ page }
     await page.reload();
     await expect(page.locator(".game-surface.table-layout")).toBeVisible();
     await expect(page.getByRole("button", { name: "Switch to grid hand layout" })).toBeVisible();
-    await expect(page.locator(".player-area").first().locator(".card-row")).toHaveCount(1);
+    await expect(page.locator(".my-area .player-area .card-row")).toHaveCount(1);
+    await expect(page.locator(".opponents-u .player-area").first().locator(".card-row")).toHaveCount(2);
     await page.getByRole("button", { name: "Switch to grid hand layout" }).click();
-    await expect(page.locator(".player-area").first().locator(".card-row")).toHaveCount(2);
+    await expect(page.locator(".my-area .player-area .card-row")).toHaveCount(2);
+    await expect(page.locator(".opponents-u .player-area").first().locator(".card-row")).toHaveCount(2);
     for (const viewport of matrix) {
       await test.step(viewport.name, async () => {
         await resizeViewport(page, viewport);
@@ -416,6 +427,7 @@ test("four-player tables keep opponent cards usable across the reported pane sha
         await expectOpponentHandsDoNotOverlap(page);
         await expectPileClearOfHands(page);
         await expectOpponentCardsAtLeast(page, pane.minimumCard);
+        await expect(page.locator(".opponents-u")).toHaveCSS("overflow-y", "visible");
         if (pane.expectU) {
           const verticalSpread = await page.locator(".opponents-u .player-area").evaluateAll((areas) => {
             const centers = areas.map((area) => {
@@ -426,6 +438,32 @@ test("four-player tables keep opponent cards usable across the reported pane sha
           });
           expect(verticalSpread, "opponents collapsed back into a top rail").toBeGreaterThan(30);
         }
+      });
+    }
+  } finally {
+    clients.forEach((client) => client.close());
+  }
+});
+
+test("five-player tables use the empty pane space for opponent cards", async ({ page }) => {
+  const room = `five-player-layout-${Date.now()}`;
+  const clients = await startedRoom(room, 5);
+  const panes = [
+    { name: "reported portrait split", width: 855, height: 1080, minimumCard: 62 },
+    { name: "reported short split", width: 755, height: 373, minimumCard: 44 },
+    { name: "narrow portrait split", width: 488, height: 610, minimumCard: 37 },
+    { name: "wide activity", width: 1180, height: 600, minimumCard: 65 },
+  ] as const;
+  try {
+    await page.goto(`/?room=${room}&user=p0&name=Player%200`);
+    for (const pane of panes) {
+      await test.step(pane.name, async () => {
+        await resizeViewport(page, pane);
+        await expectEveryOpponentFullyVisible(page);
+        await expectOpponentHandsDoNotOverlap(page);
+        await expectPileClearOfHands(page);
+        await expectOpponentCardsAtLeast(page, pane.minimumCard);
+        await expect(page.locator(".opponents-u")).toHaveCSS("overflow-y", "visible");
       });
     }
   } finally {
@@ -462,6 +500,7 @@ test("reveal flips the normal card in place in a compact activity viewport", asy
     await resizeViewport(page, { width: 755, height: 373 });
     await page.goto(`/?room=${room}&user=p0&name=Player%200`);
     await advancePlayerToReveal(page, clients, "p0");
+    await expect(page.locator(".tap-pending")).toHaveCount(0);
     const revealedSlot = page.locator(".slot-wrap.peek-reveal");
     await expect(revealedSlot).toBeVisible();
     await expect(page.locator(".peek-reveal-overlay")).toHaveCount(0);
@@ -503,6 +542,10 @@ test("round aftermath keeps ready and start controls reachable", async ({ page }
     await expect(page.locator(".player-area")).toHaveCount(0);
     await expect(page.locator(".final-hands > section")).toHaveCount(2);
     await expect(page.locator(".final-hand-cards .playing-card")).toHaveCount(8);
+    const clippedFinalHands = await page.locator(".final-hand-cards").evaluateAll((hands) =>
+      hands.filter((hand) => hand.scrollWidth > hand.clientWidth + 1).length,
+    );
+    expect(clippedFinalHands, "final card previews should wrap instead of clipping horizontally").toBe(0);
     for (const viewport of matrix) {
       await test.step(viewport.name, async () => {
         await resizeViewport(page, viewport);
@@ -633,7 +676,7 @@ test("a double-click still slaps during a power-card swap", async ({ page }) => 
     const target = page.locator(".my-area .card-button:not(:disabled)").first();
     const targetRef = await target.evaluate((button) => button.closest<HTMLElement>("[data-card-ref]")?.dataset.cardRef);
     await target.click();
-    await page.waitForTimeout(425);
+    await page.waitForTimeout(300);
     await target.click();
     await expect(page.locator(".action-card-ghost")).toBeVisible();
 
@@ -648,8 +691,21 @@ test("a double-click still slaps during a power-card swap", async ({ page }) => 
     if (slap.action.kind === "wrong_slap" || slap.action.kind === "late_slap") {
       const attemptedCard = page.locator(`[data-card-ref="${targetRef}"] .card-back`);
       await expect(attemptedCard).toHaveClass(/action-visual-hidden/);
-      await expect(page.locator(".action-card-ghost")).toHaveCount(0, { timeout: 2_000 });
+      await expect(page.locator(".action-card-ghost")).toHaveCount(0, { timeout: 3_000 });
       await expect(attemptedCard).not.toHaveClass(/action-visual-hidden/);
+      if (slap.action.kind === "wrong_slap") {
+        await expect(page.locator(".game-surface.table-layout")).not.toHaveClass(/action-in-flight/, { timeout: 3_000 });
+        const unsettledPenaltyAnimations = await page.locator(`[data-player-id="${actorId}"] .slot-wrap`).last().evaluate((card) =>
+          card.getAnimations({ subtree: true })
+            .filter((animation) => animation.playState === "running" && animation instanceof CSSAnimation && animation.animationName === "penalty-card-arrive")
+            .map((animation) => ({
+              type: animation.constructor.name,
+              animationName: animation instanceof CSSAnimation ? animation.animationName : undefined,
+              transitionProperty: animation instanceof CSSTransition ? animation.transitionProperty : undefined,
+            })),
+        );
+        expect(unsettledPenaltyAnimations, "penalty card should not restart its entrance animation").toEqual([]);
+      }
     }
   } finally {
     clients.forEach((client) => client.close());

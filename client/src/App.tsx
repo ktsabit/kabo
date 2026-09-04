@@ -377,7 +377,7 @@ function App() {
                     key={player.id}
                     style={uSeatStyle(index, opponents.length)}
                     player={player}
-                    handLayout={handLayout}
+                    handLayout="grid"
                     snapshot={snapshot}
                     selected={swapSelection}
                     onCard={cardAction}
@@ -608,29 +608,41 @@ function PlayerArea({ player, handLayout, snapshot, selected, onCard, onSlap, on
   const drawing = active && snapshot.phase === "await_choice";
   const giftMode = canInteract && snapshot.phase === "await_gift" && snapshot.pendingGift?.slapperId === snapshot.you.id && player.id === snapshot.you.id;
   const tap = useRef<{ key: string; at: number; timer?: number } | undefined>(undefined);
+  const pendingTap = useRef<{ element: HTMLElement; timer: number } | undefined>(undefined);
   const dragging = useRef(false);
   const area = useRef<HTMLElement>(null);
 
+  const clearPendingTap = () => {
+    if (!pendingTap.current) return;
+    window.clearTimeout(pendingTap.current.timer);
+    pendingTap.current.element.classList.remove("tap-pending");
+    pendingTap.current = undefined;
+  };
+
   useEffect(() => () => {
     if (tap.current?.timer) window.clearTimeout(tap.current.timer);
+    clearPendingTap();
   }, []);
 
   useEffect(() => {
     if (tap.current?.timer) window.clearTimeout(tap.current.timer);
     tap.current = undefined;
+    clearPendingTap();
   }, [snapshot.phase, snapshot.discardEventId, snapshot.action?.id]);
 
-  const handleTap = (target: CardRef) => {
+  const handleTap = (target: CardRef, element?: HTMLElement) => {
     if (dragging.current || !canInteract) return;
     const key = refKey(target);
     const now = Date.now();
     if (tap.current?.key === key && now - tap.current.at <= DOUBLE_TAP_WINDOW) {
       if (tap.current.timer) window.clearTimeout(tap.current.timer);
       tap.current = undefined;
+      clearPendingTap();
       onSlap(target);
       return;
     }
     if (tap.current?.timer) window.clearTimeout(tap.current.timer);
+    clearPendingTap();
     if (snapshot.phase === "await_swap" && snapshot.currentPlayerId === snapshot.you.id) {
       const timer = window.setTimeout(() => {
         if (tap.current?.key === key && tap.current.at === now) tap.current = undefined;
@@ -639,9 +651,17 @@ function PlayerArea({ player, handLayout, snapshot, selected, onCard, onSlap, on
       onCard(target);
       return;
     }
+    if (element) {
+      element.classList.add("tap-pending");
+      pendingTap.current = {
+        element,
+        timer: window.setTimeout(clearPendingTap, DOUBLE_TAP_WINDOW + 1_500),
+      };
+    }
     const timer = window.setTimeout(() => {
       if (dragging.current) {
         tap.current = undefined;
+        clearPendingTap();
         return;
       }
       if (giftMode) onGift(target.slot);
@@ -698,7 +718,7 @@ function PlayerArea({ player, handLayout, snapshot, selected, onCard, onSlap, on
                     aria-label={`${mine ? "Your" : player.name}'s card ${slot.slot + 1}${power ? ` · ${power === "peek" ? "peek target" : "swap target"}` : ""}`}
                     onClick={(event) => { if (event.detail === 0) giftMode ? onGift(slot.slot) : onCard(target); }}
                     onPointerDown={(event) => {
-                      if (event.isPrimary && event.button === 0) handleTap(target);
+                      if (event.isPrimary && event.button === 0) handleTap(target, event.currentTarget.closest<HTMLElement>(".slot-wrap") ?? undefined);
                     }}
                     onDragStart={(event) => {
                       dragging.current = true;
