@@ -345,6 +345,10 @@ function App() {
 
   return (
     <main className="app-shell">
+      <div className="minimized-brand" aria-label="Kabo Activity minimized">
+        <div className="brand-mark bear-logo" role="img" aria-label="Kabo bear" />
+        <h1>KABO</h1>
+      </div>
       <header className="topbar">
         <div className="room-chip">Table <b>{platform.roomId.slice(-8)}</b></div>
         {!showingAftermath && <TurnPrompt snapshot={snapshot} isMyTurn={isMyTurn} />}

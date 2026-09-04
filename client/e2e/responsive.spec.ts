@@ -205,7 +205,8 @@ async function resizeViewport(page: Page, viewport: { width: number; height: num
     const root = document.documentElement.classList;
     return root.contains("viewport-compact") === (width <= 899)
       && root.contains("viewport-narrow") === (width <= 560)
-      && root.contains("viewport-short") === (height <= 430 || (width <= 560 && height <= 500));
+      && root.contains("viewport-short") === (height <= 430 || (width <= 560 && height <= 500))
+      && root.contains("viewport-minimized") === (width <= 240 || height <= 240 || (width <= 360 && height <= 320));
   }, viewport);
   await page.evaluate(() => new Promise<void>((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
@@ -595,6 +596,34 @@ test("each player sees the private opening cards in their real hand positions", 
   }
 });
 
+test("a minimized Discord-size tile shows only the Kabo brand and restores the table", async ({ page }) => {
+  const room = `minimized-${Date.now()}`;
+  const clients = await startedRoom(room, 2);
+  try {
+    await page.goto(`/?room=${room}&user=p0&name=Player%200`);
+    await expect(page.locator(".game-surface.table-layout")).toBeVisible();
+
+    await resizeViewport(page, { width: 300, height: 220 });
+    await expect(page.locator(".minimized-brand")).toBeVisible();
+    await expect(page.locator(".minimized-brand h1")).toHaveText("KABO");
+    await expect(page.locator(".minimized-brand .bear-logo")).toBeVisible();
+    for (const selector of [".topbar", ".game-surface", ".build-status"]) {
+      await expect(page.locator(selector)).toBeHidden();
+    }
+    const minimizedWidth = await page.evaluate(() => ({
+      viewport: document.documentElement.clientWidth,
+      page: document.documentElement.scrollWidth,
+    }));
+    expect(minimizedWidth.page - minimizedWidth.viewport).toBeLessThanOrEqual(1);
+
+    await resizeViewport(page, { width: 320, height: 480 });
+    await expect(page.locator(".minimized-brand")).toBeHidden();
+    await expect(page.locator(".game-surface.table-layout")).toBeVisible();
+  } finally {
+    clients.forEach((client) => client.close());
+  }
+});
+
 test("both real player views can ready their opening cards and enter play", async ({ page, context }) => {
   const room = `two-ui-${Date.now()}`;
   const waa = await context.newPage();
@@ -675,9 +704,7 @@ test("a double-click still slaps during a power-card swap", async ({ page }) => 
 
     const target = page.locator(".my-area .card-button:not(:disabled)").first();
     const targetRef = await target.evaluate((button) => button.closest<HTMLElement>("[data-card-ref]")?.dataset.cardRef);
-    await target.click();
-    await page.waitForTimeout(300);
-    await target.click();
+    await target.dblclick({ delay: 40 });
     await expect(page.locator(".action-card-ghost")).toBeVisible();
 
     const slap = await observer.waitFor((snapshot) =>

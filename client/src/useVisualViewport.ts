@@ -15,6 +15,10 @@ export function useVisualViewport(): void {
       document.documentElement.classList.toggle("viewport-compact", width <= 899);
       document.documentElement.classList.toggle("viewport-narrow", width <= 560);
       document.documentElement.classList.toggle("viewport-short", height <= 430 || (width <= 560 && height <= 500));
+      document.documentElement.classList.toggle(
+        "viewport-minimized",
+        width <= 240 || height <= 240 || (width <= 360 && height <= 320),
+      );
     };
     const schedule = () => {
       if (frame !== undefined) return;
@@ -29,7 +33,7 @@ export function useVisualViewport(): void {
       viewport?.removeEventListener("resize", schedule);
       viewport?.removeEventListener("scroll", schedule);
       if (frame !== undefined) window.cancelAnimationFrame(frame);
-      document.documentElement.classList.remove("viewport-compact", "viewport-narrow", "viewport-short");
+      document.documentElement.classList.remove("viewport-compact", "viewport-narrow", "viewport-short", "viewport-minimized");
     };
   }, []);
 }

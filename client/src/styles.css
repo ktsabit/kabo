@@ -45,6 +45,9 @@ button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 .brand-mark { width: 64px; height: 64px; display: grid; place-items: center; border: 1px solid rgba(245, 246, 255, .35); border-radius: 18px; background: linear-gradient(145deg, #3e48ca, #20267f); box-shadow: inset 0 0 0 4px #171b62, 0 20px 55px rgba(0,0,0,.3); font-family: Georgia, serif; font-size: 32px; color: white; }
 .brand-mark.small { width: 34px; height: 34px; border-radius: 10px; font-size: 17px; box-shadow: inset 0 0 0 2px #171b62; }
 .bear-logo { background-color: #3039b9; background-image: url("/card-back.jpg"); background-position: center; background-repeat: no-repeat; background-size: cover; border-color: rgba(255,255,255,.82); box-shadow: 0 20px 55px rgba(0,0,0,.3), 0 0 30px rgba(89,100,228,.28); }
+.minimized-brand { display: none; flex: 1; min-width: 0; min-height: 0; flex-direction: column; align-items: center; justify-content: center; gap: clamp(5px, 4vmin, 12px); }
+.minimized-brand .brand-mark { width: clamp(46px, 28vmin, 78px); height: clamp(46px, 28vmin, 78px); border-radius: clamp(13px, 7vmin, 21px); }
+.minimized-brand h1 { margin: 0; color: var(--cream); font-family: var(--card-display); font-size: clamp(18px, 11vmin, 34px); letter-spacing: .08em; line-height: 1; }
 .room-chip { padding: 7px 12px; border: 1px solid rgba(245,246,255,.12); border-radius: 999px; color: var(--muted); font-size: 12px; letter-spacing: .04em; }
 .room-chip b { color: var(--cream); }
 .ghost-button { border: 1px solid rgba(245,246,255,.18); color: var(--cream); background: transparent; border-radius: 999px; padding: 9px 15px; cursor: pointer; }
@@ -337,6 +340,18 @@ button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 .loading-screen { min-height: var(--app-height, 100dvh); display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 10px; }
 .loading-screen h1 { margin: 8px 0 0; font-family: Georgia, serif; font-size: 38px; }
 .loading-screen p { margin: 0; color: var(--muted); font-size: 12px; }
+
+/* Discord can collapse an Activity into a tile too small for meaningful play.
+   Preserve the table state and replace only its presentation until restored. */
+:root.viewport-minimized body { min-width: 0; min-height: var(--app-height, 100dvh); overflow: hidden; }
+:root.viewport-minimized .app-shell { padding: max(6px, env(safe-area-inset-top)) max(6px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left)); }
+:root.viewport-minimized .app-shell > :not(.minimized-brand) { display: none !important; }
+:root.viewport-minimized .minimized-brand { display: flex; }
+:root.viewport-minimized .loading-screen { gap: clamp(4px, 3vmin, 8px); padding: 6px; overflow: hidden; }
+:root.viewport-minimized .loading-screen .brand-mark { width: clamp(46px, 28vmin, 78px); height: clamp(46px, 28vmin, 78px); border-radius: clamp(13px, 7vmin, 21px); }
+:root.viewport-minimized .loading-screen h1 { margin: 0; font-size: clamp(18px, 11vmin, 34px); letter-spacing: .08em; }
+:root.viewport-minimized .loading-screen p,
+:root.viewport-minimized .loading-screen .build-status { display: none; }
 
 @media (max-width: 899px) {
   .app-shell { padding-left: max(10px, env(safe-area-inset-left)); padding-right: max(10px, env(safe-area-inset-right)); }
