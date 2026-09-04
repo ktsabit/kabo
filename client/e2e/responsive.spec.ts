@@ -481,7 +481,18 @@ test("a power-card swap completes as soon as the second card is selected", async
     await targets.nth(0).click();
     await expect(page.locator(".selection-order")).toHaveText("1");
     await targets.nth(1).click();
+    await expect(page.locator(".action-motion-layer .action-card-ghost")).toHaveCount(2);
+    const layoutAnimationProperties = await page.locator(".action-motion-layer").evaluate((layer) => {
+      const layoutProperties = new Set(["left", "top", "right", "bottom", "width", "height"]);
+      return layer.getAnimations({ subtree: true }).flatMap((animation) =>
+        animation.effect instanceof KeyframeEffect
+          ? animation.effect.getKeyframes().flatMap((frame) => Object.keys(frame).filter((key) => layoutProperties.has(key)))
+          : [],
+      );
+    });
+    expect(layoutAnimationProperties, "card flights should stay on compositor-friendly properties").toEqual([]);
     await observer.waitFor((snapshot) => snapshot.phase !== "await_swap");
+    await expect(page.locator(".action-motion-layer .action-card-ghost")).toHaveCount(0);
     await expect(page.getByText("Select 2 cards — swap is automatic")).toBeHidden();
   } finally {
     clients.forEach((client) => client.close());

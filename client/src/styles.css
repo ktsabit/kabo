@@ -17,13 +17,15 @@
   --motion-normal: 260ms;
   --card-display: "Cooper Black", "Arial Rounded MT Bold", "Arial Black", Georgia, serif;
   --table-card-width: clamp(58px, min(7.4vw, 8.7vh), 88px);
+  --app-height: 100dvh;
+  --app-offset-top: 0px;
 }
 
 * { box-sizing: border-box; }
 html, body, #root { width: 100%; height: 100%; min-height: 0; margin: 0; }
 body {
   min-width: 320px;
-  min-height: 100dvh;
+  min-height: var(--app-height, 100dvh);
   overflow: auto;
   scrollbar-width: none;
   background:
@@ -35,7 +37,7 @@ body::-webkit-scrollbar { display: none; }
 button { font: inherit; }
 button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 
-.app-shell { position: relative; width: 100%; height: 100dvh; min-height: 0; padding: max(14px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); display: flex; flex-direction: column; overflow: hidden; }
+.app-shell { position: relative; width: 100%; height: var(--app-height, 100dvh); min-height: 0; padding: max(14px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); display: flex; flex-direction: column; overflow: hidden; }
 .topbar { position: relative; min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .topbar-actions { display: flex; align-items: center; gap: 10px; }
 .brand { display: flex; align-items: center; gap: 10px; font-family: Georgia, serif; font-size: 20px; letter-spacing: -.02em; }
@@ -214,12 +216,15 @@ button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 @keyframes discard-ring-flow { to { --discard-angle: 360deg; } }
 .drawn-card-position { min-width: var(--table-card-width); min-height: calc(var(--table-card-width) * 1.4); display: flex; justify-content: center; align-items: flex-start; }
 .drawn-card-zone { display: flex; flex-direction: column; align-items: center; gap: 5px; animation: draw-to-table .34s cubic-bezier(.2,.8,.2,1); }
-.action-card-ghost { animation: none !important; transition: none !important; filter: drop-shadow(0 14px 22px rgba(0,0,0,.42)); overflow: visible; perspective: 800px; }
+.action-motion-layer { position: fixed; z-index: 100; inset: 0; overflow: visible; pointer-events: none; contain: layout style; }
+.action-card-ghost { position: absolute; left: 0; top: 0; z-index: 2; margin: 0; animation: none !important; transition: none !important; filter: drop-shadow(0 14px 22px rgba(0,0,0,.42)); overflow: visible; perspective: 800px; transform-origin: top left; will-change: transform, opacity; }
+.action-card-pose { position: absolute; inset: 0; transform-origin: center; transform-style: preserve-3d; will-change: transform; }
 .action-card-ghost > .playing-card, .action-card-ghost > .card-back,
-.action-card-ghost .playing-card, .action-card-ghost .card-back { width: 100% !important; height: 100% !important; aspect-ratio: auto; }
+.action-card-ghost .playing-card, .action-card-ghost .card-back,
+.action-card-pose > .playing-card, .action-card-pose > .card-back { width: 100% !important; height: 100% !important; aspect-ratio: auto; }
 .swap-card-flight { perspective: none; transform-style: flat; }
 .swap-card-flight, .swap-card-flight * { animation: none !important; transition: none !important; backface-visibility: visible !important; }
-.action-card-static { position: fixed; z-index: 80; pointer-events: none; overflow: visible; }
+.action-card-static { position: absolute; z-index: 1; pointer-events: none; overflow: visible; }
 .action-card-static > .playing-card, .action-card-static > .card-back, .action-card-static > .empty-discard,
 .action-card-static .playing-card, .action-card-static .card-back, .action-card-static .empty-discard { width: 100% !important; height: 100% !important; aspect-ratio: auto; }
 .action-card-flipper { position: absolute; inset: 0; transform-style: preserve-3d; }
@@ -227,7 +232,7 @@ button:focus-visible { outline: 3px solid #c8ccff; outline-offset: 3px; }
 .action-card-layer > .playing-card, .action-card-layer > .card-back { width: 100%; height: 100%; }
 .action-card-front { transform: rotateY(0deg); }
 .action-card-back { transform: rotateY(180deg); }
-.wrong-slap-flight, .late-slap-flight { position: fixed; z-index: 100; pointer-events: none; visibility: hidden; }
+.wrong-slap-flight, .late-slap-flight { z-index: 3; pointer-events: none; visibility: visible; }
 .wrong-slap-flight { filter: drop-shadow(0 12px 22px rgba(255,75,75,.42)); }
 .late-slap-flight { filter: drop-shadow(0 12px 22px rgba(169,176,255,.48)); }
 .wrong-slap-flight .playing-card, .late-slap-flight .playing-card { width: 100%; height: 100%; }

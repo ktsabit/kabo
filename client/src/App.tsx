@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { flushSync } from "react-dom";
-import { createRoot } from "react-dom/client";
 import type {
   ActionView,
   Card,
@@ -11,42 +10,18 @@ import type {
   ServerMessage,
   SnapshotMessage,
 } from "../../shared/protocol";
-import { cardLabel, isRed } from "./cards";
-import { faceFor } from "./cardFaces";
 import { ActionSequence } from "./actionSequence";
+import { CardBack, PeekableCard, PlayingCard } from "./Card";
+import { ActionMotionDirector } from "./motion/actionMotion";
 import { initializePlatform, type PlatformSession, websocketURL } from "./platform";
+import { useVisualViewport } from "./useVisualViewport";
 
 type ConnectionState = "connecting" | "open" | "closed";
 type HandLayout = "strip" | "grid";
 
-type ActionAnchor = {
-  element: HTMLElement;
-  rect: DOMRect;
-};
-
-type ActionGeometry = {
-  first?: ActionAnchor;
-  second?: ActionAnchor;
-  target?: ActionAnchor;
-  discard?: ActionAnchor;
-  drawn?: ActionAnchor;
-};
-
-type ActionVisualHold = {
-  id: number;
-  release: () => void;
-};
-
-type FlightSettle = {
-  holdAtDestination?: number;
-  beforeRemove?: () => void;
-  destination?: () => DOMRect | undefined;
-};
-
 const DOUBLE_TAP_WINDOW = 500;
 const HAND_LAYOUT_STORAGE_KEY = "kabo-hand-layout";
 const BUILD_VERSION = (import.meta.env.VITE_BUILD_VERSION || "local").slice(0, 5);
-const activeActionAnimations = new Set<Animation>();
 
 function savedHandLayout(): HandLayout {
   try {
@@ -56,23 +31,8 @@ function savedHandLayout(): HandLayout {
   }
 }
 
-function actionAnimate(element: Element, keyframes: Keyframe[] | PropertyIndexedKeyframes, options?: number | KeyframeAnimationOptions) {
-  const animation = element.animate(keyframes, options);
-  activeActionAnimations.add(animation);
-  const forget = () => activeActionAnimations.delete(animation);
-  animation.addEventListener("finish", forget, { once: true });
-  animation.addEventListener("cancel", forget, { once: true });
-  return animation;
-}
-
-function cancelActionAnimations() {
-  [...activeActionAnimations].forEach((animation) => animation.cancel());
-  activeActionAnimations.clear();
-  document.querySelectorAll(".action-card-ghost, .action-card-static, .wrong-slap-flight, .late-slap-flight, .slap-flash")
-    .forEach((element) => element.remove());
-}
-
 function App() {
+  useVisualViewport();
   const [platform, setPlatform] = useState<PlatformSession>();
   const [snapshot, setSnapshot] = useState<SnapshotMessage>();
   const [connection, setConnection] = useState<ConnectionState>("connecting");
@@ -89,7 +49,9 @@ function App() {
   const playbackEpoch = useRef(0);
   const awaitingRecoverySnapshot = useRef(false);
   const animationPumpFrame = useRef<number | undefined>(undefined);
-  const actionVisualHold = useRef<ActionVisualHold | undefined>(undefined);
+  const tableRoot = useRef<HTMLElement>(null);
+  const actionMotion = useRef<ActionMotionDirector | undefined>(undefined);
+  if (!actionMotion.current) actionMotion.current = new ActionMotionDirector(() => tableRoot.current);
 
   const renderSnapshot = (next: SnapshotMessage, synchronous = false) => {
     renderedSnapshot.current = next;
@@ -105,11 +67,7 @@ function App() {
       window.cancelAnimationFrame(animationPumpFrame.current);
       animationPumpFrame.current = undefined;
     }
-    actionVisualHold.current?.release();
-    actionVisualHold.current = undefined;
-    cancelActionAnimations();
-    document.documentElement.classList.remove("action-in-flight");
-    clearHandCompaction();
+    actionMotion.current?.cancel();
     if (authoritative) {
       renderedSnapshot.current = authoritative;
       flushSync(() => {
@@ -127,22 +85,16 @@ function App() {
     const queued = actionSequence.current.beginNext();
     if (!queued) return;
 
-    const geometry = captureActionGeometry(queued.action);
-    clearHandCompaction();
+    const motion = actionMotion.current!.capture(queued.action);
     const heldActivePlayerID = renderedSnapshot.current?.currentPlayerId;
     const epoch = playbackEpoch.current;
-    document.documentElement.classList.add("action-in-flight");
     animationRunning.current = true;
     renderedSnapshot.current = queued.snapshot;
     flushSync(() => {
       setActionAnimating(true);
       setSnapshot(queued.snapshot);
     });
-    const hold: ActionVisualHold = { id: queued.action.id, release: holdActionVisuals(queued.action, heldActivePlayerID) };
-    actionVisualHold.current?.release();
-    actionVisualHold.current = hold;
-
-    void animateAction(queued.action, geometry)
+    void actionMotion.current!.play(motion, heldActivePlayerID)
       .catch((error: unknown) => console.error("Kabo action animation failed", error))
       .finally(() => {
         if (epoch !== playbackEpoch.current) return;
@@ -150,14 +102,8 @@ function App() {
         if (deferred) {
           renderSnapshot(deferred, true);
         }
-        if (actionVisualHold.current?.id === queued.action.id) {
-          actionVisualHold.current.release();
-          actionVisualHold.current = undefined;
-        }
         animationRunning.current = false;
         if (!actionSequence.current.hasQueued()) {
-          document.documentElement.classList.remove("action-in-flight");
-          clearHandCompaction();
           flushSync(() => setActionAnimating(false));
         } else {
           scheduleActionPump();
@@ -184,6 +130,10 @@ function App() {
     else if (decision === "queue") scheduleActionPump();
     else if (decision === "restart") recoverVisualState(next);
   };
+
+  useEffect(() => {
+    return () => actionMotion.current?.destroy();
+  }, []);
 
   useEffect(() => {
     initializePlatform().then(setPlatform).catch((error: unknown) => {
@@ -258,10 +208,14 @@ function App() {
     const onOffline = () => socket.current?.close();
     document.addEventListener("visibilitychange", onVisibilityChange);
     window.addEventListener("resize", onResize);
+    window.visualViewport?.addEventListener("resize", onResize);
+    window.visualViewport?.addEventListener("scroll", onResize);
     window.addEventListener("offline", onOffline);
     return () => {
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("resize", onResize);
+      window.visualViewport?.removeEventListener("resize", onResize);
+      window.visualViewport?.removeEventListener("scroll", onResize);
       window.removeEventListener("offline", onOffline);
       if (resizeFrame !== undefined) window.cancelAnimationFrame(resizeFrame);
     };
@@ -409,7 +363,7 @@ function App() {
         </div>
       </header>
 
-      <section className={`game-surface ${snapshot.phase !== "lobby" ? `table-layout hands-${handLayout}` : ""} ${showingAftermath ? "round-ended" : ""}`}>
+      <section ref={tableRoot} className={`game-surface ${snapshot.phase !== "lobby" ? `table-layout hands-${handLayout}` : ""} ${showingAftermath ? "round-ended" : ""}`}>
         {snapshot.phase === "lobby" ? (
           <Lobby snapshot={snapshot} platform={platform} send={send} />
         ) : (
@@ -444,7 +398,7 @@ function App() {
                       <span>{snapshot.drawPileCount}</span>
                       <small>DRAW</small>
                     </button>
-                    <div className={`drawn-card-position ${snapshot.hasDrawnCard ? "occupied" : ""}`}>
+                    <div className={`drawn-card-position ${snapshot.hasDrawnCard ? "occupied" : ""}`} data-motion-zone="drawn">
                       {snapshot.hasDrawnCard && (
                         <div className="drawn-card-zone">
                           {snapshot.drawnCard ? <PlayingCard card={snapshot.drawnCard} compact /> : <CardBack compact />}
@@ -464,7 +418,7 @@ function App() {
                         }
                       }}
                     >
-                      <div className="discard-card-frame">
+                      <div className="discard-card-frame" data-motion-zone="discard">
                         {snapshot.discardTop ? <PlayingCard card={snapshot.discardTop} compact /> : <div className="empty-discard">Discard</div>}
                       </div>
                       <small>DISCARD</small>
@@ -836,53 +790,6 @@ function TurnCountdown({ deadlineAt }: { deadlineAt?: number }) {
   return <time className={`turn-countdown ${seconds <= 3 ? "urgent" : ""}`} aria-label={`${seconds} seconds remaining`}>{seconds}s</time>;
 }
 
-function PlayingCard({ card, compact = false, flipped = false }: { card: Card; compact?: boolean; flipped?: boolean }) {
-  const Face = faceFor(card);
-  return (
-    <div className={`playing-card asset-card ${compact ? "compact" : ""} ${isRed(card) ? "red" : "black"} ${flipped ? "flip-in" : ""}`} aria-label={cardLabel(card)}>
-      <Face title={cardLabel(card)} width="100%" height="100%" />
-    </div>
-  );
-}
-
-function CardBack({ compact = false }: { compact?: boolean }) {
-  return <div className={`card-back ${compact ? "compact" : ""}`} aria-label="Face-down card" />;
-}
-
-function PeekableCard({ card, compact = false }: { card?: Card; compact?: boolean }) {
-  const [face, setFace] = useState<Card | undefined>(card);
-  const [revealed, setRevealed] = useState(false);
-
-  useEffect(() => {
-    let firstFrame: number | undefined;
-    let secondFrame: number | undefined;
-    let hideTimer: number | undefined;
-    if (card) {
-      setFace(card);
-      setRevealed(false);
-      firstFrame = window.requestAnimationFrame(() => {
-        secondFrame = window.requestAnimationFrame(() => setRevealed(true));
-      });
-    } else if (face) {
-      setRevealed(false);
-      hideTimer = window.setTimeout(() => setFace(undefined), 300);
-    }
-    return () => {
-      if (firstFrame !== undefined) window.cancelAnimationFrame(firstFrame);
-      if (secondFrame !== undefined) window.cancelAnimationFrame(secondFrame);
-      if (hideTimer !== undefined) window.clearTimeout(hideTimer);
-    };
-  }, [card?.id]);
-
-  if (!face) return <CardBack compact={compact} />;
-  return (
-    <div className={`peek-card ${compact ? "compact" : ""} ${revealed ? "revealed" : ""}`} aria-label={revealed ? cardLabel(face) : "Face-down card"}>
-      <div className="peek-card-layer peek-card-back" aria-hidden="true"><CardBack compact={compact} /></div>
-      <div className="peek-card-layer peek-card-front" aria-hidden="true"><PlayingCard card={face} compact={compact} /></div>
-    </div>
-  );
-}
-
 function sameRef(a: CardRef, b: CardRef) {
   return a.playerId === b.playerId && a.slot === b.slot;
 }
@@ -929,494 +836,6 @@ function uSeatStyle(index: number, total: number): CSSProperties {
   const y = 20 + 25 * edge ** 1.55;
   const scale = total <= 4 ? 1 : total <= 6 ? .82 : .7;
   return { "--u-x": `${x}%`, "--u-y": `${y}%`, "--u-scale": scale } as CSSProperties;
-}
-
-function captureActionGeometry(action: ActionView): ActionGeometry {
-  return {
-    first: action.first ? captureAnchor(action.first) : undefined,
-    second: action.second ? captureAnchor(action.second) : undefined,
-    target: action.target ? captureAnchor(action.target) : undefined,
-    discard: captureElementAnchor(document.querySelector<HTMLElement>(".discard-wrap .playing-card, .discard-wrap .card-back, .discard-wrap .empty-discard")),
-    drawn: captureElementAnchor(document.querySelector<HTMLElement>(".drawn-card-zone .playing-card, .drawn-card-zone .card-back")),
-  };
-}
-
-function captureAnchor(target: CardRef): ActionAnchor | undefined {
-  const slot = slotFor(target);
-  if (!slot) return undefined;
-  const element = slot.querySelector<HTMLElement>(".playing-card, .card-back") ?? slot;
-  return captureElementAnchor(element);
-}
-
-function captureElementAnchor(element: HTMLElement | null): ActionAnchor | undefined {
-  if (!element) return undefined;
-  return { element: element.cloneNode(true) as HTMLElement, rect: element.getBoundingClientRect() };
-}
-
-async function animateAction(action: ActionView, geometry: ActionGeometry): Promise<void> {
-  switch (action.kind) {
-    case "wrong_slap":
-      return animateWrongSlap(action, geometry);
-    case "late_slap":
-      return animateSlapReveal(action, geometry, false);
-    case "swap":
-      if (geometry.first && geometry.second && action.first && action.second) {
-        return animateSwap(action.first, action.second, geometry.first, geometry.second);
-      }
-      return;
-    case "replace":
-      if (geometry.target && geometry.discard && geometry.drawn && action.target) {
-        return animateReplace(action, action.target, geometry.target, geometry.discard, geometry.drawn);
-      }
-      return;
-    case "discard":
-      if (geometry.discard && geometry.drawn) return animateDiscard(action, geometry.discard, geometry.drawn);
-      return;
-    case "slap":
-      if (geometry.target && geometry.discard) return animateSlap(action, geometry.target, geometry.discard);
-      return;
-    case "gift":
-      if (geometry.first && geometry.second && action.first && action.second) {
-        return animateGift(action.second, geometry.first);
-      }
-      return;
-  }
-}
-
-function slotFor(target: CardRef): HTMLElement | undefined {
-  return [...document.querySelectorAll<HTMLElement>("[data-card-ref]")].find((slot) => slot.dataset.cardRef === refKey(target));
-}
-
-async function animateSwap(firstRef: CardRef, secondRef: CardRef, first: ActionAnchor, second: ActionAnchor): Promise<void> {
-  const firstDestination = liveCardRect(firstRef);
-  const secondDestination = liveCardRect(secondRef);
-  if (!firstDestination || !secondDestination) return;
-  const distance = Math.hypot(secondDestination.left - first.rect.left, secondDestination.top - first.rect.top);
-  const swapArc = Math.min(96, Math.max(48, distance * .16));
-  const restoreCards = hideElements([liveCardElement(firstRef), liveCardElement(secondRef)]);
-  let arrivals = 0;
-  let restored = false;
-  const revealUnderFlights = () => {
-    arrivals += 1;
-    if (arrivals < 2 || restored) return;
-    restored = true;
-    restoreCards();
-  };
-  try {
-    await Promise.all([
-      flyCard(cardBackElement(), first.rect, secondDestination, -swapArc, 0, 760, undefined, false, 0, "swap-card-flight", { holdAtDestination: 90, beforeRemove: revealUnderFlights, destination: () => liveCardRect(secondRef) }),
-      flyCard(cardBackElement(), second.rect, firstDestination, swapArc, 0, 760, undefined, false, 0, "swap-card-flight", { holdAtDestination: 90, beforeRemove: revealUnderFlights, destination: () => liveCardRect(firstRef) }),
-    ]);
-  } finally {
-    if (!restored) restoreCards();
-  }
-}
-
-function cardBackElement(): HTMLElement {
-  return Object.assign(document.createElement("div"), { className: "card-back compact" });
-}
-
-async function animateReplace(action: ActionView, targetRef: CardRef, target: ActionAnchor, discard: ActionAnchor, drawn: ActionAnchor): Promise<void> {
-  const targetDestination = liveCardRect(targetRef);
-  const discardDestination = liveDiscardRect();
-  if (!targetDestination || !discardDestination) return;
-  const releaseDiscard = pinActionCard(discard, liveDiscardRect);
-  const observerAlreadySeesBack = drawn.element.matches(".card-back")
-    || (Boolean(drawn.element.querySelector(".card-back")) && !drawn.element.querySelector(".playing-card"));
-  try {
-    await Promise.all([
-      // Keep the outgoing card covering the old discard until the incoming
-      // card has also finished. Otherwise the old discard flashes back for a
-      // few frames between the two independent animations.
-      flyCard(target.element, target.rect, discardDestination, -30, 0, 855, action.card, false, 7, "", { destination: liveDiscardRect }),
-      flyCard(drawn.element, drawn.rect, targetDestination, 34, 95, 760, undefined, !observerAlreadySeesBack, 7, "", { destination: () => liveCardRect(targetRef) }),
-    ]);
-  } finally {
-    releaseDiscard();
-  }
-}
-
-async function animateDiscard(action: ActionView, discard: ActionAnchor, drawn: ActionAnchor): Promise<void> {
-  const discardDestination = liveDiscardRect();
-  if (!discardDestination) return;
-  const releaseDiscard = pinActionCard(discard, liveDiscardRect);
-  try {
-    await flyCard(drawn.element, drawn.rect, discardDestination, -22, 0, 620, action.card, false, 7, "", { destination: liveDiscardRect });
-  } finally {
-    releaseDiscard();
-  }
-}
-
-async function animateSlap(action: ActionView, target: ActionAnchor, discard: ActionAnchor): Promise<void> {
-  const discardDestination = liveDiscardRect();
-  if (!discardDestination) return;
-  const releaseDiscard = pinActionCard(discard, liveDiscardRect);
-  try {
-    await flyCard(target.element, target.rect, discardDestination, -38, 0, 680, action.card, false, 7, "", { destination: liveDiscardRect });
-    if (action.target) await animateHandCompaction(action.target.playerId);
-  } finally {
-    releaseDiscard();
-  }
-}
-
-async function animateHandCompaction(playerId: string): Promise<void> {
-  const grid = [...document.querySelectorAll<HTMLElement>(".player-area")]
-    .find((area) => area.dataset.playerId === playerId)
-    ?.querySelector<HTMLElement>(".card-grid");
-  if (!grid) return;
-  const cards = [...grid.querySelectorAll<HTMLElement>(".slot-wrap:not(.empty-slot-anchor)")];
-  const before = new Map(cards.map((card) => [card.dataset.cardRef, card.getBoundingClientRect()]));
-  grid.classList.add("hand-compacting");
-  const animations = cards.flatMap((card) => {
-    const previous = before.get(card.dataset.cardRef);
-    if (!previous) return [];
-    const next = card.getBoundingClientRect();
-    const offsetX = previous.left - next.left;
-    if (Math.abs(offsetX) < 1) return [];
-    return [actionAnimate(card, [
-      { transform: `translate3d(${offsetX}px, 0, 0)` },
-      { transform: "translate3d(0, 0, 0)" },
-    ], { duration: 340, easing: "cubic-bezier(.2,.75,.25,1)", fill: "both" })];
-  });
-  await Promise.all(animations.map((animation) => animation.finished.catch(() => undefined)));
-}
-
-function clearHandCompaction() {
-  document.querySelectorAll(".card-grid.hand-compacting")
-    .forEach((grid) => grid.classList.remove("hand-compacting"));
-}
-
-function animateWrongSlap(action: ActionView, geometry: ActionGeometry): Promise<void> {
-  return animateSlapReveal(action, geometry, true);
-}
-
-function animateSlapReveal(action: ActionView, geometry: ActionGeometry, penalized: boolean): Promise<void> {
-  if (!action.target || !action.card) {
-    return penalized ? animateWrongSlapShake(action.actorId) : Promise.resolve();
-  }
-  const discard = document.querySelector<HTMLElement>(".discard-wrap");
-  const source = slotFor(action.target);
-  if (!discard || (!geometry.target && !source)) {
-    return penalized ? animateWrongSlapShake(action.actorId) : Promise.resolve();
-  }
-
-  const sourceCard = source?.querySelector<HTMLElement>(".playing-card, .card-back, .empty-slot");
-  const from = geometry.target?.rect ?? sourceCard?.getBoundingClientRect() ?? source?.getBoundingClientRect();
-  if (!from) {
-    return penalized ? animateWrongSlapShake(action.actorId) : Promise.resolve();
-  }
-  const discardRect = discard.getBoundingClientRect();
-  const width = from.width || 70;
-  const height = from.height || width * 1.4;
-  const rightSide = discardRect.right + 12;
-  const leftSide = discardRect.left - width - 12;
-  const finalLeft = rightSide + width <= window.innerWidth - 8
-    ? rightSide
-    : leftSide >= 8
-      ? leftSide
-      : Math.min(window.innerWidth - width - 8, discardRect.left + 14);
-  const finalTop = Math.max(8, Math.min(window.innerHeight - height - 8, discardRect.top + 10));
-  const ghost = document.createElement("div");
-  ghost.className = penalized ? "wrong-slap-flight" : "late-slap-flight";
-  Object.assign(ghost.style, {
-    left: `${from.left}px`,
-    top: `${from.top}px`,
-    width: `${width}px`,
-    height: `${height}px`,
-    visibility: "visible",
-  });
-  document.body.appendChild(ghost);
-  const root = createRoot(ghost);
-  flushSync(() => root.render(<PlayingCard card={action.card!} compact />));
-
-  const dx = finalLeft - from.left;
-  const dy = finalTop - from.top;
-  const animation = actionAnimate(ghost, [
-    { transform: "translate3d(0,0,0) rotate(0deg) scale(.88)", opacity: 0 },
-    { transform: `translate3d(${dx * .45}px, ${dy * .45 - 28}px, 0) rotate(-7deg) scale(1.04)`, opacity: 1, offset: .46 },
-    { transform: `translate3d(${dx}px, ${dy}px, 0) rotate(-9deg) scale(.9)`, opacity: .92 },
-  ], { duration: 720, easing: "cubic-bezier(.2,.78,.2,1)", fill: "both" });
-  return new Promise<void>((resolve) => {
-    let settled = false;
-    let fallback: number | undefined;
-    const finish = (shake: boolean) => {
-      if (settled) return;
-      settled = true;
-      if (fallback !== undefined) window.clearTimeout(fallback);
-      try {
-        root.unmount();
-      } finally {
-        ghost.remove();
-      }
-      if (shake) void animateWrongSlapShake(action.actorId).then(resolve);
-      else resolve();
-    };
-    const finishWithShake = () => finish(penalized);
-    const cancel = () => finish(false);
-    animation.addEventListener("finish", finishWithShake, { once: true });
-    animation.addEventListener("cancel", cancel, { once: true });
-    fallback = window.setTimeout(finishWithShake, 980);
-  });
-}
-
-function animateWrongSlapShake(playerID: string): Promise<void> {
-  const area = [...document.querySelectorAll<HTMLElement>(".player-area")].find((item) => item.dataset.playerId === playerID);
-  if (!area) return Promise.resolve();
-  const areaRect = area.getBoundingClientRect();
-  area.querySelector<HTMLElement>(".penalty-card-pending")?.classList.add("penalty-arriving");
-  const flash = document.createElement("div");
-  flash.className = "slap-flash";
-  flash.style.setProperty("--flash-x", `${areaRect.left + areaRect.width / 2}px`);
-  flash.style.setProperty("--flash-y", `${areaRect.top + areaRect.height / 2}px`);
-  document.body.appendChild(flash);
-  const flashAnimation = actionAnimate(flash, [{ opacity: 0 }, { opacity: 1, offset: .28 }, { opacity: 0 }], { duration: 520, easing: "ease-out" });
-  const removeFlash = () => flash.remove();
-  flashAnimation.addEventListener("finish", removeFlash, { once: true });
-  flashAnimation.addEventListener("cancel", removeFlash, { once: true });
-  window.setTimeout(removeFlash, 720);
-  const baseTransform = getComputedStyle(area).transform;
-  const withOffset = (x: number, rotation = 0) => `${baseTransform === "none" ? "" : `${baseTransform} `}translateX(${x}px) rotate(${rotation}deg)`;
-  const shakeAnimation = actionAnimate(area, [
-    { transform: withOffset(0), filter: "drop-shadow(0 0 0 rgba(255,75,75,0))" },
-    { transform: withOffset(-9, -1), filter: "drop-shadow(0 0 30px rgba(255,75,75,.95))" },
-    { transform: withOffset(8, 1), filter: "drop-shadow(0 0 38px rgba(255,75,75,.9))" },
-    { transform: withOffset(-6), filter: "drop-shadow(0 0 24px rgba(255,75,75,.65))" },
-    { transform: withOffset(4) },
-    { transform: withOffset(0), filter: "drop-shadow(0 0 0 rgba(255,75,75,0))" },
-  ], { duration: 620, easing: "ease-out" });
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      resolve();
-    };
-    shakeAnimation.addEventListener("finish", finish, { once: true });
-    shakeAnimation.addEventListener("cancel", finish, { once: true });
-    window.setTimeout(finish, 760);
-  });
-}
-
-async function animateGift(targetRef: CardRef, source: ActionAnchor): Promise<void> {
-  const destination = liveCardRect(targetRef);
-  if (!destination) return;
-  await flyCard(source.element, source.rect, destination, 28, 0, 720, undefined, false, 7, "", { destination: () => liveCardRect(targetRef) });
-}
-
-function flyCard(
-  card: HTMLElement,
-  from: DOMRect,
-  to: DOMRect,
-  arc: number,
-  delay: number,
-  duration: number,
-  face?: Card,
-  flipToBack = false,
-  tilt = 7,
-  flightClass = "",
-  settle?: FlightSettle,
-): Promise<void> {
-  const ghost = document.createElement("div");
-  ghost.className = `action-card-ghost ${flightClass}`.trim();
-  let root: ReturnType<typeof createRoot> | undefined;
-  let flipper: HTMLElement | undefined;
-  if (flipToBack) {
-    flipper = document.createElement("div");
-    flipper.className = "action-card-flipper";
-    const front = document.createElement("div");
-    front.className = "action-card-layer action-card-front";
-    const back = document.createElement("div");
-    back.className = "action-card-layer action-card-back";
-    if (face) {
-      root = createRoot(front);
-      flushSync(() => root!.render(<PlayingCard card={face} compact />));
-    } else {
-      const clone = card.cloneNode(true) as HTMLElement;
-      clone.classList.remove("flip-in");
-      front.appendChild(clone);
-    }
-    back.appendChild(Object.assign(document.createElement("div"), { className: "card-back compact" }));
-    flipper.append(front, back);
-    ghost.append(flipper);
-  } else if (face) {
-    root = createRoot(ghost);
-    flushSync(() => root!.render(<PlayingCard card={face} compact />));
-  } else {
-    const clone = card.cloneNode(true) as HTMLElement;
-    clone.classList.remove("flip-in");
-    ghost.appendChild(clone);
-  }
-  Object.assign(ghost.style, {
-    position: "fixed",
-    left: `${from.left}px`,
-    top: `${from.top}px`,
-    width: `${from.width}px`,
-    height: `${from.height}px`,
-    margin: "0",
-    zIndex: "100",
-    pointerEvents: "none",
-    transformOrigin: "top left",
-  });
-  document.body.appendChild(ghost);
-  const dx = to.left - from.left;
-  const dy = to.top - from.top;
-  const midWidth = from.width + (to.width - from.width) * .52;
-  const midHeight = from.height + (to.height - from.height) * .52;
-  const animation = actionAnimate(ghost, [
-    { width: `${from.width}px`, height: `${from.height}px`, transform: "translate3d(0,0,0) rotate(0deg)", opacity: 1 },
-    { width: `${midWidth}px`, height: `${midHeight}px`, transform: `translate3d(${dx * .5}px, ${dy * .5 + arc}px, 0) rotate(${arc > 0 ? tilt : -tilt}deg)`, opacity: 1, offset: .52 },
-    { width: `${to.width}px`, height: `${to.height}px`, transform: `translate3d(${dx}px, ${dy}px, 0) rotate(0deg)`, opacity: 1 },
-  ], { duration, delay, easing: "cubic-bezier(.2,.78,.2,1)", fill: "both" });
-  if (flipToBack && flipper) {
-    const flipDelay = delay + duration * .68;
-    const flipDuration = Math.min(300, duration * .32);
-    actionAnimate(flipper, [
-      { transform: "rotateY(0deg)" },
-      { transform: "rotateY(180deg)" },
-    ], { duration: flipDuration, delay: flipDelay, easing: "cubic-bezier(.45,.05,.55,.95)", fill: "both" });
-  }
-  return new Promise<void>((resolve) => {
-    let settled = false;
-    let fallback: number | undefined;
-    const cleanup = () => {
-      try {
-        root?.unmount();
-      } finally {
-        ghost.remove();
-      }
-      resolve();
-    };
-    const finish = (arrived: boolean) => {
-      if (settled) return;
-      settled = true;
-      if (fallback !== undefined) window.clearTimeout(fallback);
-      if (!arrived) {
-        cleanup();
-        return;
-      }
-      void settleFlightGhost(ghost, settle?.destination).then(() => {
-        if (!ghost.isConnected) {
-          cleanup();
-          return;
-        }
-        settle?.beforeRemove?.();
-        const hold = settle?.holdAtDestination ?? 0;
-        if (hold > 0) window.setTimeout(cleanup, hold);
-        else cleanup();
-      });
-    };
-    animation.addEventListener("finish", () => finish(true), { once: true });
-    animation.addEventListener("cancel", () => finish(false), { once: true });
-    fallback = window.setTimeout(() => finish(true), duration + delay + 180);
-  });
-}
-
-async function settleFlightGhost(ghost: HTMLElement, destination?: () => DOMRect | undefined): Promise<void> {
-  if (!destination || !ghost.isConnected) return;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const target = destination();
-    if (!target || !ghost.isConnected) return;
-    const current = ghost.getBoundingClientRect();
-    const dx = target.left - current.left;
-    const dy = target.top - current.top;
-    const dw = target.width - current.width;
-    const dh = target.height - current.height;
-    if (Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dw), Math.abs(dh)) < .75) return;
-    const computed = getComputedStyle(ghost);
-    const left = Number.parseFloat(computed.left) || 0;
-    const top = Number.parseFloat(computed.top) || 0;
-    const correction = actionAnimate(ghost, [
-      { left: `${left}px`, top: `${top}px`, width: `${current.width}px`, height: `${current.height}px` },
-      { left: `${left + dx}px`, top: `${top + dy}px`, width: `${target.width}px`, height: `${target.height}px` },
-    ], { duration: attempt === 0 ? 120 : 70, easing: "cubic-bezier(.2,.8,.2,1)", fill: "forwards" });
-    await correction.finished.catch(() => undefined);
-  }
-}
-
-function pinActionCard(anchor: ActionAnchor, destination?: () => DOMRect | undefined): () => void {
-  const ghost = document.createElement("div");
-  ghost.className = "action-card-static";
-  ghost.appendChild(anchor.element.cloneNode(true));
-  document.body.appendChild(ghost);
-  let frame: number | undefined;
-  const track = () => {
-    const rect = destination?.() ?? anchor.rect;
-    Object.assign(ghost.style, {
-      left: `${rect.left}px`,
-      top: `${rect.top}px`,
-      width: `${rect.width}px`,
-      height: `${rect.height}px`,
-    });
-    frame = window.requestAnimationFrame(track);
-  };
-  track();
-  return () => {
-    if (frame !== undefined) window.cancelAnimationFrame(frame);
-    ghost.remove();
-  };
-}
-
-function liveCardRect(target: CardRef): DOMRect | undefined {
-  return liveCardElement(target)?.getBoundingClientRect();
-}
-
-function liveCardElement(target: CardRef): HTMLElement | undefined {
-  const slot = slotFor(target);
-  return slot?.querySelector<HTMLElement>(".playing-card, .card-back, .empty-slot") ?? slot;
-}
-
-function liveDiscardElement(): HTMLElement | undefined {
-  return document.querySelector<HTMLElement>(".discard-wrap .playing-card, .discard-wrap .card-back, .discard-wrap .empty-discard") ?? undefined;
-}
-
-function liveDiscardRect(): DOMRect | undefined {
-  return liveDiscardElement()?.getBoundingClientRect();
-}
-
-function holdActionVisuals(action: ActionView, activePlayerID?: string): () => void {
-  const elements: Array<HTMLElement | undefined> = [];
-  switch (action.kind) {
-    case "replace":
-      if (action.target) elements.push(liveCardElement(action.target));
-      elements.push(liveDiscardElement());
-      break;
-    case "discard":
-    case "slap":
-      elements.push(liveDiscardElement());
-      break;
-    case "swap":
-      // Keep the destination backs rendered under the swap flights. Hiding
-      // them caused a one-frame reveal after the ghosts landed.
-      break;
-    case "gift":
-      if (action.second) elements.push(liveCardElement(action.second));
-      break;
-    case "wrong_slap":
-      break;
-    case "late_slap":
-      break;
-  }
-  const releaseElements = hideElements(elements);
-  const activeArea = activePlayerID
-    ? [...document.querySelectorAll<HTMLElement>(".player-area")].find((area) => area.dataset.playerId === activePlayerID)
-    : undefined;
-  const penaltySlot = action.kind === "wrong_slap"
-    ? [...document.querySelectorAll<HTMLElement>(".player-area")]
-      .find((area) => area.dataset.playerId === action.actorId)
-      ?.querySelector<HTMLElement>(".penalty-card-pending")
-    : undefined;
-  activeArea?.classList.add("action-active-held");
-  return () => {
-    releaseElements();
-    activeArea?.classList.remove("action-active-held");
-    penaltySlot?.classList.remove("penalty-arriving");
-  };
-}
-
-function hideElements(elements: Array<HTMLElement | undefined>): () => void {
-  const visible = [...new Set(elements.filter((element): element is HTMLElement => Boolean(element)))];
-  visible.forEach((element) => element.classList.add("action-visual-hidden"));
-  return () => visible.forEach((element) => element.classList.remove("action-visual-hidden"));
 }
 
 function hash(value: string) {
