@@ -32,7 +32,7 @@ export function PeekableCard({ card, compact = false }: { card?: Card; compact?:
       });
     } else if (face) {
       setRevealed(false);
-      hideTimer = window.setTimeout(() => setFace(undefined), 300);
+      hideTimer = window.setTimeout(() => setFace(undefined), 180);
     }
     return () => {
       if (firstFrame !== undefined) window.cancelAnimationFrame(firstFrame);

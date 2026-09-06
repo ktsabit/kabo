@@ -1,16 +1,16 @@
 import type { ActionView, Card, CardRef } from "../../../shared/protocol";
 
 export const MOTION_TIMING = {
-  swapMs: 430,
-  replaceOutMs: 460,
-  replaceInMs: 410,
-  discardMs: 360,
-  slapMs: 390,
-  giftMs: 320,
-  rejectedSlapOutMs: 320,
-  rejectedSlapHoldMs: 500,
-  rejectedSlapReturnMs: 420,
-  compactMs: 220,
+  swapMs: 250,
+  replaceOutMs: 260,
+  replaceInMs: 215,
+  discardMs: 200,
+  slapMs: 220,
+  giftMs: 200,
+  rejectedSlapOutMs: 180,
+  rejectedSlapHoldMs: 180,
+  rejectedSlapReturnMs: 200,
+  compactMs: 120,
 } as const;
 
 export type MotionAnchor =

@@ -19,7 +19,7 @@ import { useVisualViewport } from "./useVisualViewport";
 type ConnectionState = "connecting" | "open" | "closed";
 type HandLayout = "strip" | "grid";
 
-const DOUBLE_TAP_WINDOW = 200;
+const DOUBLE_TAP_WINDOW = 300;
 const HAND_LAYOUT_STORAGE_KEY = "kabo-hand-layout";
 const BUILD_VERSION = (import.meta.env.VITE_BUILD_VERSION || "local").slice(0, 5);
 
@@ -96,6 +96,9 @@ function App() {
     });
     void actionMotion.current!.play(motion, {
       activePlayerId: heldActivePlayerID,
+      onReady: () => {
+        if (epoch === playbackEpoch.current) flushSync(() => setActionAnimating(false));
+      },
     })
       .catch((error: unknown) => console.error("Kabo action animation failed", error))
       .finally(() => {
@@ -125,6 +128,11 @@ function App() {
       recoverVisualState(next);
       setNotice("Back at the table");
       window.setTimeout(() => setNotice(undefined), 1800);
+      return;
+    }
+    // Live updates take priority over finishing an older visual sequence.
+    if (actionSequence.current.isBusy()) {
+      recoverVisualState(next);
       return;
     }
     const decision = actionSequence.current.ingest(next, renderedSnapshot.current !== undefined);

@@ -772,3 +772,44 @@ test("resize interruption and reconnect recover to an authoritative table", asyn
     clients.forEach((client) => client.close());
   }
 });
+
+test("card taps resolve in 160ms and fresh state interrupts card motion", async ({ page }) => {
+  const clients = await startedRoom(`input-latency-${Date.now()}`, 2);
+  try {
+    const baseline = clients[0].latest;
+    const actorId = baseline.currentPlayerId;
+    const actor = clients.find((client) => client.latest.you.id === actorId)!;
+    const card = { id: "latency-card", rank: 4, suit: "clubs" };
+    const choice = { ...actor.latest, phase: "await_choice", hasDrawnCard: true, drawnCard: card };
+    let publish!: (snapshot: any) => void;
+    const sent: any[] = [];
+    await page.routeWebSocket("**/ws?**", (ws) => {
+      publish = (snapshot) => ws.send(JSON.stringify(snapshot));
+      ws.onMessage((message) => sent.push(JSON.parse(String(message))));
+      publish(choice);
+    });
+    await page.goto(`/?room=input-latency&user=${actorId}&name=Player`);
+    const target = page.locator(".my-area .card-button").first();
+    await expect(target).toBeEnabled();
+    await page.clock.install();
+    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+    await target.dispatchEvent("pointerdown", { isPrimary: true, button: 0 });
+    await page.clock.runFor(159);
+    expect(sent.filter((message) => message.type === "replace")).toHaveLength(0);
+    await page.clock.runFor(1);
+    await expect.poll(() => sent.filter((message) => message.type === "replace").length).toBe(1);
+
+    const discarded = { ...choice, phase: "await_draw", drawnCard: undefined, hasDrawnCard: false,
+      action: { id: (choice.action?.id ?? 0) + 1, kind: "discard", actorId, card } };
+    await page.clock.resume();
+    publish(discarded);
+    await expect(page.locator(".action-card-ghost")).toHaveCount(1);
+    // A draw update with the same action ID must be visible without waiting for the flight.
+    publish({ ...choice, action: discarded.action });
+    await expect(page.locator(".action-card-ghost")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Discard drawn card" })).toBeEnabled();
+    await expect(target).toBeEnabled();
+  } finally {
+    clients.forEach((client) => client.close());
+  }
+});

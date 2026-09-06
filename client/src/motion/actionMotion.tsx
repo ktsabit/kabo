@@ -18,6 +18,7 @@ export type CapturedActionMotion = {
 
 export type ActionMotionContext = {
   activePlayerId?: string;
+  onReady?: () => void;
 };
 
 type MeasuredAnchor = {
@@ -217,11 +218,14 @@ export class ActionMotionDirector {
       const settles = flights.map(({ outer, cue }) => this.animate(outer, [
         { opacity: 1 },
         { opacity: 0 },
-      ], { duration: cue.handoff ? 72 : 64, easing: "cubic-bezier(.4,0,1,1)", fill: "forwards" }));
+      ], { duration: cue.handoff ? 40 : 32, easing: "cubic-bezier(.4,0,1,1)", fill: "forwards" }));
       await waitForAnimations(settles);
       if (epoch !== this.epoch) return;
 
       if (captured.plan.compactPlayerId) await this.compactHand(root, captured.plan.compactPlayerId);
+      if (epoch !== this.epoch) return;
+      activeArea?.classList.remove("action-active-held");
+      context.onReady?.();
       if (captured.plan.penaltyPlayerId) await this.playPenalty(root, captured.plan.penaltyPlayerId);
     } finally {
       if (epoch === this.epoch) cleanup();
@@ -372,8 +376,10 @@ export class ActionMotionDirector {
     if (!grid) return;
     const cards = [...grid.querySelectorAll<HTMLElement>(".slot-wrap:not(.empty-slot-anchor)")];
     const before = new Map(cards.map((card) => [card.dataset.cardRef, card.getBoundingClientRect()]));
+    const epoch = this.epoch;
     grid.classList.add("hand-compacting");
     await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    if (epoch !== this.epoch) return;
     const animations = cards.flatMap((card) => {
       const previous = before.get(card.dataset.cardRef);
       if (!previous) return [];
