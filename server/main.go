@@ -106,7 +106,7 @@ func main() {
 	if strings.EqualFold(env("DISCORD_REGISTER_COMMANDS", "false"), "true") {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		if err := registerLeaderboardCommand(ctx, s.discord.ClientID, s.discord.BotToken, os.Getenv("DISCORD_GUILD_ID")); err != nil {
-			log.Printf("register Discord /leaderboard command: %v", err)
+			log.Printf("register Discord scoreboard commands: %v", err)
 		}
 		if err := configureDiscordEntryPoint(ctx, s.discord.ClientID, s.discord.BotToken); err != nil {
 			log.Printf("configure Discord Play entry point: %v", err)

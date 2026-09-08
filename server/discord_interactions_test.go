@@ -96,6 +96,58 @@ func TestDiscordInteractionHandlerAcknowledgesPingAndServesLeaderboard(t *testin
 	}
 }
 
+func TestDiscordInteractionHandlerServesLoserboard(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := persistence.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.RecordRound(game.RoundResult{
+		RoomID: "loserboard-room", Platform: "discord", GuildID: "guild", Round: 1,
+		StartedAt: time.Unix(10, 0), EndedAt: time.Unix(20, 0), EndReason: "called_end",
+		Players: []game.PlayerResult{
+			{ID: "winner", Name: "Winner", Score: 1, Winner: true},
+			{ID: "player", Name: "Player", Score: 9, Loser: true},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	completed := make(chan struct{})
+	var uploadedBody []byte
+	s := &server{
+		results:              store,
+		interactionPublicKey: publicKey,
+		discord: auth.Discord{HTTPClient: &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+			uploadedBody, _ = io.ReadAll(request.Body)
+			close(completed)
+			return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader("{}")), Header: make(http.Header)}, nil
+		})}},
+	}
+	request := signedDiscordRequest(t, privateKey, `{"type":2,"application_id":"app","token":"token","guild_id":"guild","member":{"user":{"id":"player"}},"data":{"name":"loserboard"}}`)
+	response := httptest.NewRecorder()
+	s.handleDiscordInteraction(response, request)
+	var interactionResponse discordInteractionResponse
+	if err := json.NewDecoder(response.Body).Decode(&interactionResponse); err != nil {
+		t.Fatal(err)
+	}
+	if interactionResponse.Type != discordResponseDeferred {
+		t.Fatalf("loserboard response = %+v, want deferred response", interactionResponse)
+	}
+	select {
+	case <-completed:
+	case <-time.After(time.Second):
+		t.Fatal("deferred loserboard was not completed")
+	}
+	if !bytes.Contains(uploadedBody, []byte("kabo:loserboard:player:delete")) || !bytes.Contains(uploadedBody, []byte("\x89PNG")) {
+		t.Fatal("loserboard upload omitted its image or owner-scoped controls")
+	}
+}
+
 func TestLeaderboardComponentsProvideOwnerScopedPaginationAndDelete(t *testing.T) {
 	rows := renderLeaderboardComponents("viewer", 1, 3)
 	if len(rows) != 1 || len(rows[0].Components) != 5 {
@@ -118,6 +170,10 @@ func TestLeaderboardComponentsProvideOwnerScopedPaginationAndDelete(t *testing.T
 	owner, action, _, ok = parseLeaderboardComponentID(buttons[4].CustomID)
 	if !ok || owner != "viewer" || action != "delete" {
 		t.Fatalf("parsed delete button = owner %q action %q ok %v", owner, action, ok)
+	}
+	loserRows := renderScoreboardComponents(loserboardCommandName, "viewer", 1, 3)
+	if !strings.HasPrefix(loserRows[0].Components[1].CustomID, loserboardComponentPrefix) {
+		t.Fatalf("loserboard pagination ID = %q", loserRows[0].Components[1].CustomID)
 	}
 }
 
@@ -166,6 +222,10 @@ func TestLeaderboardImageEmbedContainsNoExtraCopy(t *testing.T) {
 	}
 	if embed.Image == nil || embed.Image.URL != "attachment://leaderboard.png" {
 		t.Fatalf("image embed = %+v", embed.Image)
+	}
+	loserEmbed := renderScoreboardEmbed([]persistence.LeaderboardEntry{{DisplayName: "Player"}}, "attachment://leaderboard.png", true)
+	if loserEmbed.Title != "" || loserEmbed.Description != "" || loserEmbed.Footer != nil || len(loserEmbed.Fields) != 0 || loserEmbed.Image == nil {
+		t.Fatalf("loserboard image embed contains extra copy: %+v", loserEmbed)
 	}
 }
 

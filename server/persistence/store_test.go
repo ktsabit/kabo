@@ -124,14 +124,14 @@ func TestLeaderboardIsGuildScopedAndRanksByTotalWins(t *testing.T) {
 			StartedAt: time.Unix(10, 0), EndedAt: time.Unix(20, 0), EndReason: "called_end",
 			Players: []game.PlayerResult{
 				{ID: "a", Name: "Ada", Score: 4, Winner: true},
-				{ID: "b", Name: "Ben", Score: 3},
+				{ID: "b", Name: "Ben", Score: 3, Loser: true},
 			},
 		},
 		{
 			RoomID: "guild-a-room", Platform: "discord", GuildID: "guild-a", Round: 2,
 			StartedAt: time.Unix(30, 0), EndedAt: time.Unix(40, 0), EndReason: "called_end",
 			Players: []game.PlayerResult{
-				{ID: "a", Name: "Ada Updated", Score: 3},
+				{ID: "a", Name: "Ada Updated", Score: 3, Loser: true},
 				{ID: "b", Name: "Ben", Score: 1, Winner: true},
 			},
 		},
@@ -140,7 +140,7 @@ func TestLeaderboardIsGuildScopedAndRanksByTotalWins(t *testing.T) {
 			StartedAt: time.Unix(45, 0), EndedAt: time.Unix(46, 0), EndReason: "called_end",
 			Players: []game.PlayerResult{
 				{ID: "a", Name: "Ada Updated", Score: 12, Winner: true},
-				{ID: "b", Name: "Ben", Score: 0},
+				{ID: "b", Name: "Ben", Score: 0, Loser: true},
 			},
 		},
 		{
@@ -169,6 +169,14 @@ func TestLeaderboardIsGuildScopedAndRanksByTotalWins(t *testing.T) {
 	}
 	if entries[1].PlayerID != "b" || entries[1].DisplayName != "Ben" || entries[1].Games != 3 || entries[1].Wins != 1 || entries[1].TotalScore != 4 {
 		t.Fatalf("second leaderboard entry = %+v, want Ben with 1 win despite his lower hand-score total", entries[1])
+	}
+
+	losers, err := store.Loserboard("guild-a", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(losers) != 2 || losers[0].PlayerID != "b" || losers[0].Losses != 2 || losers[0].LossRate != 100*2.0/3.0 || losers[0].Games != 3 || losers[1].PlayerID != "a" || losers[1].Losses != 1 {
+		t.Fatalf("loserboard = %+v, want Ben first with two losses and Ada second with one", losers)
 	}
 }
 

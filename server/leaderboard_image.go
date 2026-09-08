@@ -44,6 +44,14 @@ func renderLeaderboardPNG(_ string, entries []persistence.LeaderboardEntry, avat
 }
 
 func renderLeaderboardPagePNG(entries []persistence.LeaderboardEntry, avatars map[string]image.Image, rankOffset int, viewerID, viewerName string) ([]byte, error) {
+	return renderScoreboardPagePNG(entries, avatars, rankOffset, viewerID, viewerName, false)
+}
+
+func renderLoserboardPagePNG(entries []persistence.LeaderboardEntry, avatars map[string]image.Image, rankOffset int, viewerID, viewerName string) ([]byte, error) {
+	return renderScoreboardPagePNG(entries, avatars, rankOffset, viewerID, viewerName, true)
+}
+
+func renderScoreboardPagePNG(entries []persistence.LeaderboardEntry, avatars map[string]image.Image, rankOffset int, viewerID, viewerName string, loserboard bool) ([]byte, error) {
 	if len(entries) > leaderboardSize {
 		entries = entries[:leaderboardSize]
 	}
@@ -69,7 +77,11 @@ func renderLeaderboardPagePNG(entries []persistence.LeaderboardEntry, avatars ma
 		return nil, err
 	}
 
-	drawCenteredTextAt(canvas, "Kabo Leaderboard", leaderboardImageWidth/2, 30, titleFace, rgba(246, 247, 251, 255))
+	title := "Kabo Leaderboard"
+	if loserboard {
+		title = "Kabo Loserboard"
+	}
+	drawCenteredTextAt(canvas, title, leaderboardImageWidth/2, 30, titleFace, rgba(246, 247, 251, 255))
 
 	if len(entries) == 0 {
 		drawCenteredTextAt(canvas, "No completed rounds yet", leaderboardImageWidth/2, 132, nameFace, rgba(155, 159, 178, 255))
@@ -83,13 +95,13 @@ func renderLeaderboardPagePNG(entries []persistence.LeaderboardEntry, avatars ma
 		if podiumCount > 3 {
 			podiumCount = 3
 		}
-		drawLeaderboardPodium(canvas, entries[:podiumCount], avatars, viewerID, viewerName, nameFace, valueFace, rankFace)
+		drawLeaderboardPodium(canvas, entries[:podiumCount], avatars, viewerID, viewerName, nameFace, valueFace, rankFace, loserboard)
 		startIndex = podiumCount
 		rowY = leaderboardListStart
 	}
 	for index := startIndex; index < len(entries); index++ {
 		entry := entries[index]
-		drawLeaderboardRow(canvas, entry, rankOffset+index+1, rowY+(index-startIndex)*leaderboardRowHeight, viewerID, viewerName, nameFace, valueFace, rankFace, avatars[entry.PlayerID])
+		drawLeaderboardRow(canvas, entry, rankOffset+index+1, rowY+(index-startIndex)*leaderboardRowHeight, viewerID, viewerName, nameFace, valueFace, rankFace, avatars[entry.PlayerID], loserboard)
 	}
 
 	return encodeLeaderboardPNG(canvas)
@@ -148,7 +160,7 @@ func drawKaboLeaderboardBackground(canvas *image.RGBA) {
 	}
 }
 
-func drawLeaderboardPodium(canvas *image.RGBA, entries []persistence.LeaderboardEntry, avatars map[string]image.Image, viewerID, viewerName string, nameFace, valueFace, rankFace font.Face) {
+func drawLeaderboardPodium(canvas *image.RGBA, entries []persistence.LeaderboardEntry, avatars map[string]image.Image, viewerID, viewerName string, nameFace, valueFace, rankFace font.Face, loserboard bool) {
 	positions := []int{500}
 	if len(entries) == 2 {
 		positions = []int{360, 650}
@@ -171,11 +183,11 @@ func drawLeaderboardPodium(canvas *image.RGBA, entries []persistence.Leaderboard
 		drawCircle(canvas, x, rankY, 24, accent)
 		drawCenteredTextAt(canvas, itoa(rank), x, rankY-12, rankFace, accentText)
 		drawCenteredTextAt(canvas, fitLeaderboardText(name, nameFace, 240), x, centerY+radius+31, nameFace, rgba(246, 247, 251, 255))
-		drawCenteredTextAt(canvas, winsLabel(entry.Wins), x, centerY+radius+69, valueFace, rgba(169, 176, 255, 255))
+		drawCenteredTextAt(canvas, scoreboardLabel(entry, loserboard), x, centerY+radius+69, valueFace, rgba(169, 176, 255, 255))
 	}
 }
 
-func drawLeaderboardRow(canvas *image.RGBA, entry persistence.LeaderboardEntry, rank, y int, viewerID, viewerName string, nameFace, valueFace, rankFace font.Face, avatar image.Image) {
+func drawLeaderboardRow(canvas *image.RGBA, entry persistence.LeaderboardEntry, rank, y int, viewerID, viewerName string, nameFace, valueFace, rankFace font.Face, avatar image.Image, loserboard bool) {
 	highlighted := viewerID != "" && entry.PlayerID == viewerID
 	background := rgba(21, 25, 70, 255)
 	if highlighted {
@@ -187,7 +199,7 @@ func drawLeaderboardRow(canvas *image.RGBA, entry persistence.LeaderboardEntry, 
 	drawText(canvas, itoa(rank), 56, y+18, rankFace, rgba(245, 246, 249, 255))
 	drawLeaderboardAvatar(canvas, 126, y+31, 25, name, avatar, leaderboardRankAccent(rank), leaderboardRankAccentText(rank), 16)
 	drawText(canvas, fitLeaderboardText(name, nameFace, 610), 170, y+15, nameFace, rgba(246, 247, 251, 255))
-	drawRightText(canvas, winsLabel(entry.Wins), 936, y+18, valueFace, rgba(169, 176, 255, 255))
+	drawRightText(canvas, scoreboardLabel(entry, loserboard), 936, y+18, valueFace, rgba(169, 176, 255, 255))
 }
 
 func leaderboardRankAccent(rank int) color.RGBA {
@@ -220,6 +232,21 @@ func winsLabel(wins int) string {
 		return "1 win"
 	}
 	return itoa(wins) + " wins"
+}
+
+func lossesLabel(losses int) string {
+	if losses == 1 {
+		return "1 loss"
+	}
+	return itoa(losses) + " losses"
+}
+
+func scoreboardLabel(entry persistence.LeaderboardEntry, loserboard bool) string {
+	label := winsLabel(entry.Wins)
+	if loserboard {
+		label = lossesLabel(entry.Losses)
+	}
+	return label + " · " + itoa(entry.Games) + " times played"
 }
 
 func drawLeaderboardAvatar(canvas *image.RGBA, x, y, radius int, name string, avatar image.Image, background, foreground color.RGBA, fontSize float64) {

@@ -21,9 +21,11 @@ type LeaderboardEntry struct {
 	DisplayName  string
 	Games        int
 	Wins         int
+	Losses       int
 	TotalScore   int
 	AverageScore float64
 	WinRate      float64
+	LossRate     float64
 }
 
 func Open(path string) (*Store, error) {
@@ -181,6 +183,19 @@ func (s *Store) Leaderboard(guildID string, limit int) ([]LeaderboardEntry, erro
 }
 
 func (s *Store) LeaderboardPage(guildID string, offset, limit int) ([]LeaderboardEntry, int, error) {
+	return s.scoreboardPage(guildID, offset, limit, false)
+}
+
+func (s *Store) Loserboard(guildID string, limit int) ([]LeaderboardEntry, error) {
+	entries, _, err := s.LoserboardPage(guildID, 0, limit)
+	return entries, err
+}
+
+func (s *Store) LoserboardPage(guildID string, offset, limit int) ([]LeaderboardEntry, int, error) {
+	return s.scoreboardPage(guildID, offset, limit, true)
+}
+
+func (s *Store) scoreboardPage(guildID string, offset, limit int, loserboard bool) ([]LeaderboardEntry, int, error) {
 	if s == nil || s.db == nil {
 		return nil, 0, errors.New("database is not open")
 	}
@@ -206,6 +221,19 @@ func (s *Store) LeaderboardPage(guildID string, offset, limit int) ([]Leaderboar
 		return nil, 0, err
 	}
 
+	orderBy := `stats.wins DESC,
+		(stats.wins * 1.0 / stats.games) DESC,
+		(stats.total_score * 1.0 / stats.games) ASC,
+		stats.games DESC,
+		COALESCE(display_name, stats.player_id) COLLATE NOCASE ASC`
+	if loserboard {
+		orderBy = `stats.losses DESC,
+			(stats.losses * 1.0 / stats.games) DESC,
+			(stats.total_score * 1.0 / stats.games) DESC,
+			stats.games DESC,
+			COALESCE(display_name, stats.player_id) COLLATE NOCASE ASC`
+	}
+
 	rows, err := s.db.Query(`
 		SELECT stats.player_id,
 			COALESCE((
@@ -220,22 +248,20 @@ func (s *Store) LeaderboardPage(guildID string, offset, limit int) ([]Leaderboar
 			), '') AS display_name,
 			stats.games,
 			stats.wins,
+			stats.losses,
 			stats.total_score
 		FROM (
 			SELECT rp.player_id,
 				COUNT(*) AS games,
 				SUM(rp.is_winner) AS wins,
+				SUM(rp.is_loser) AS losses,
 				SUM(rp.score) AS total_score
 			FROM round_players rp
 			JOIN rounds r ON r.id = rp.round_id
 			WHERE r.platform = 'discord' AND r.guild_id = ?
 			GROUP BY rp.player_id
 		) stats
-		ORDER BY stats.wins DESC,
-			(stats.wins * 1.0 / stats.games) DESC,
-			(stats.total_score * 1.0 / stats.games) ASC,
-			stats.games DESC,
-			COALESCE(display_name, stats.player_id) COLLATE NOCASE ASC
+		ORDER BY `+orderBy+`
 		LIMIT ? OFFSET ?
 	`, guildID, guildID, limit, offset)
 	if err != nil {
@@ -246,7 +272,7 @@ func (s *Store) LeaderboardPage(guildID string, offset, limit int) ([]Leaderboar
 	entries := make([]LeaderboardEntry, 0, limit)
 	for rows.Next() {
 		var entry LeaderboardEntry
-		if err := rows.Scan(&entry.PlayerID, &entry.DisplayName, &entry.Games, &entry.Wins, &entry.TotalScore); err != nil {
+		if err := rows.Scan(&entry.PlayerID, &entry.DisplayName, &entry.Games, &entry.Wins, &entry.Losses, &entry.TotalScore); err != nil {
 			return nil, 0, err
 		}
 		if entry.DisplayName == "" {
@@ -254,6 +280,7 @@ func (s *Store) LeaderboardPage(guildID string, offset, limit int) ([]Leaderboar
 		}
 		entry.AverageScore = float64(entry.TotalScore) / float64(entry.Games)
 		entry.WinRate = 100 * float64(entry.Wins) / float64(entry.Games)
+		entry.LossRate = 100 * float64(entry.Losses) / float64(entry.Games)
 		entries = append(entries, entry)
 	}
 	if err := rows.Err(); err != nil {

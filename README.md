@@ -19,7 +19,7 @@ A playable, server-authoritative Kabo card game. It runs as a normal web app for
 - Lobby readiness checks for every selected player, with the previous round's winner starting the next round.
 - Configurable server deadlines: 30 seconds for the opening peek, 15 seconds for turn phases, and 3 seconds for reveal acknowledgement by default; a drawn card is discarded automatically when possible, otherwise the turn advances.
 - SQLite audit history with Activity/room metadata (application, instance, guild, channel, location, platform, and launch identifiers), player scores and outcomes, and a chronological per-round event log.
-- An optional Discord `/leaderboard` slash command, ranked by total round wins within the current server.
+- Optional Discord `/leaderboard` and `/loserboard` slash commands, ranked by total wins and losses within the current server.
 - Flowing power/discard indicators, queued slap animations, face-up late/wrong slap flights, and a responsive table shell for narrow or short Discord viewports.
 
 Card faces use the CC0-licensed [`@letele/playing-cards`](https://github.com/letele/playing-cards) SVG deck, based on Adrian Kennard's classic designs. The custom indigo bear artwork remains the card back.
@@ -110,17 +110,17 @@ The current Go server cannot run as a normal Cloudflare Worker. Cloudflare Conta
 4. Serve the built client and Go API from the same public HTTPS origin. For development, tunnel port 8080 after building the client, or tunnel the Vite port while separately mapping the API. In **Activities → URL Mappings**, map prefix `/` to the public hostname **without** `https://`.
 5. Set `ALLOW_GUESTS=false` in production. Set `DISCORD_BOT_TOKEN` to make the backend validate the supplied instance through Discord's Activity Instance API before creating a game session. The installed bot also needs View Channel, Send Messages, Embed Links, and Attach Files in channels where Kabo is played.
 
-### Discord `/leaderboard` command
+### Discord `/leaderboard` and `/loserboard` commands
 
 The server includes a signed HTTP interaction handler at `/api/discord/interactions` and reads completed Discord Activity rounds from the same SQLite database. To enable the command:
 
 1. Copy **General Information → Public Key** into `DISCORD_PUBLIC_KEY`.
-2. Set `DISCORD_GUILD_ID` to a test server ID and `DISCORD_REGISTER_COMMANDS=true`, then restart once. The server registers `/leaderboard` as a guild command and configures the global **Play** Entry Point as app-handled. Guild command updates are immediate.
+2. Set `DISCORD_GUILD_ID` to a test server ID and `DISCORD_REGISTER_COMMANDS=true`, then restart once. The server registers `/leaderboard` and `/loserboard` as guild commands and configures the global **Play** Entry Point as app-handled. Guild command updates are immediate.
 3. Set `DISCORD_REGISTER_COMMANDS=false` after registration. Remove `DISCORD_GUILD_ID` and repeat registration if you want a global command; global command propagation can take longer.
 4. In **General Information → Interactions Endpoint URL**, enter `https://YOUR_DOMAIN/api/discord/interactions`.
-5. Install the application in the server with the `applications.commands` scope, then run `/leaderboard` in that server.
+5. Install the application in the server with the `applications.commands` scope, then run `/leaderboard` or `/loserboard` in that server.
 
-The command is public and ranks the server by total round wins. Its image uses a top-three podium followed by compact ranked rows; the requesting member is highlighted under their full server nickname. If more than ten players are ranked, owner-only Previous and Next buttons page through the full standings without changing absolute ranks. The public **Play Kabo** button launches the Activity, while an owner-only red ❌ button removes the message. Ties are broken by win rate, then average hand score and rounds played. Older Activity rows that stored the Discord client as `desktop` or `mobile` are migrated automatically to the `discord` round source while retaining the client-platform detail. The endpoint verifies Discord's `X-Signature-Ed25519` and `X-Signature-Timestamp` headers before reading any interaction.
+The commands are public and return image-only cards: `/leaderboard` ranks total round wins, while `/loserboard` ranks total round losses. Each card shows times played; the requesting member is highlighted under their full server nickname. If more than ten players are ranked, owner-only Previous and Next buttons page through the full standings without changing absolute ranks. The public **Play Kabo** button launches the Activity, while an owner-only red ❌ button removes the message. Ties are broken by the relevant win/loss rate, then average hand score and rounds played. Older Activity rows that stored the Discord client as `desktop` or `mobile` are migrated automatically to the `discord` round source while retaining the client-platform detail. The endpoint verifies Discord's `X-Signature-Ed25519` and `X-Signature-Timestamp` headers before reading any interaction.
 
 ### Live Discord session card
 
@@ -136,8 +136,8 @@ Credential locations in the Developer Portal:
 - `DISCORD_CLIENT_SECRET`: **OAuth2 → Client Secret**. This is private and belongs only in the host's runtime secrets.
 - `DISCORD_BOT_TOKEN`: **Bot → Token → Reset Token** if Discord is not currently showing one. This is private and belongs only in the host's runtime secrets.
 - `DISCORD_PUBLIC_KEY`: **General Information → Public Key**. Used to verify signed Discord interactions; it is not a secret.
-- `DISCORD_GUILD_ID`: Optional test-server ID for registering `/leaderboard` as an instant guild command.
-- `DISCORD_REGISTER_COMMANDS`: Set to `true` only while registering `/leaderboard` and configuring the app-handled **Play** Entry Point; leave it `false` afterward.
+- `DISCORD_GUILD_ID`: Optional test-server ID for registering `/leaderboard` and `/loserboard` as instant guild commands.
+- `DISCORD_REGISTER_COMMANDS`: Set to `true` only while registering the scoreboards and configuring the app-handled **Play** Entry Point; leave it `false` afterward.
 
 Discord Activities route network traffic through their proxy. WebSockets are supported; WebRTC is not. Because this app keeps assets, OAuth, and WebSocket traffic on one mapped origin, no extra third-party URL mappings are required. See Discord's current [Activity tutorial](https://docs.discord.com/developers/activities/building-an-activity), [networking guide](https://docs.discord.com/developers/activities/development-guides/networking), and [multiplayer/instance guide](https://docs.discord.com/developers/activities/development-guides/multiplayer-experience).
 

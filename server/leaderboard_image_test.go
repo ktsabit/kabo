@@ -61,3 +61,13 @@ func TestLeaderboardDisplayNameUsesFullViewerNickname(t *testing.T) {
 		t.Fatalf("non-viewer display name = %q", got)
 	}
 }
+
+func TestScoreboardLabelIncludesTimesPlayed(t *testing.T) {
+	entry := persistence.LeaderboardEntry{Wins: 2, Losses: 3, Games: 4}
+	if got := scoreboardLabel(entry, false); got != "2 wins · 4 times played" {
+		t.Fatalf("leaderboard label = %q", got)
+	}
+	if got := scoreboardLabel(entry, true); got != "3 losses · 4 times played" {
+		t.Fatalf("loserboard label = %q", got)
+	}
+}
