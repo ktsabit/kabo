@@ -85,7 +85,7 @@ func TestDiscordInteractionHandlerAcknowledgesPingAndServesLeaderboard(t *testin
 	if !strings.HasPrefix(uploadedContentType, "multipart/form-data;") {
 		t.Fatalf("leaderboard upload Content-Type = %q", uploadedContentType)
 	}
-	if !strings.Contains(string(uploadedBody), "attachment://leaderboard.png") || !strings.Contains(string(uploadedBody), "filename=\"leaderboard.png\"") || !bytes.Contains(uploadedBody, []byte("\x89PNG")) {
+	if !strings.Contains(string(uploadedBody), `"content":"","embeds":[]`) || strings.Contains(string(uploadedBody), "attachment://") || !strings.Contains(string(uploadedBody), "filename=\"leaderboard.png\"") || !bytes.Contains(uploadedBody, []byte("\x89PNG")) {
 		t.Fatal("leaderboard upload did not contain the expected embed attachment")
 	}
 	if strings.Contains(string(uploadedBody), "All-Time Standings") || strings.Contains(string(uploadedBody), "Ranked by total") || strings.Contains(string(uploadedBody), "win rounds, climb") {

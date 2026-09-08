@@ -180,6 +180,39 @@ func TestLeaderboardIsGuildScopedAndRanksByTotalWins(t *testing.T) {
 	}
 }
 
+func TestScoreboardsRankRateBeforeTotal(t *testing.T) {
+	store, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	for round := 1; round <= 4; round++ {
+		players := []game.PlayerResult{{ID: "frequent", Name: "Frequent", Winner: round <= 2, Loser: round > 2}}
+		if round == 1 {
+			players = append(players, game.PlayerResult{ID: "winner", Name: "Winner", Winner: true}, game.PlayerResult{ID: "loser", Name: "Loser", Loser: true})
+		}
+		if err := store.RecordRound(game.RoundResult{RoomID: "rates", Platform: "discord", GuildID: "guild", Round: round, Players: players}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, board := range []struct {
+		read  func(string, int, int) ([]LeaderboardEntry, int, error)
+		first string
+	}{{store.LeaderboardPage, "winner"}, {store.LoserboardPage, "loser"}} {
+		entries, total, err := board.read("guild", 0, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if total != 3 || len(entries) != 1 || entries[0].PlayerID != board.first {
+			t.Fatalf("rate ranking: %+v, total %d", entries, total)
+		}
+		entries, _, err = board.read("guild", 1, 1)
+		if err != nil || len(entries) != 1 || entries[0].PlayerID != "frequent" {
+			t.Fatalf("rate pagination: %+v, %v", entries, err)
+		}
+	}
+}
+
 func TestLeaderboardPageReturnsAbsoluteSliceAndTotal(t *testing.T) {
 	store, err := Open(":memory:")
 	if err != nil {

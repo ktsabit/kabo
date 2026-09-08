@@ -184,6 +184,7 @@ func drawLeaderboardPodium(canvas *image.RGBA, entries []persistence.Leaderboard
 		drawCenteredTextAt(canvas, itoa(rank), x, rankY-12, rankFace, accentText)
 		drawCenteredTextAt(canvas, fitLeaderboardText(name, nameFace, 240), x, centerY+radius+31, nameFace, rgba(246, 247, 251, 255))
 		drawCenteredTextAt(canvas, scoreboardLabel(entry, loserboard), x, centerY+radius+69, valueFace, rgba(169, 176, 255, 255))
+		drawCenteredTextAt(canvas, itoa(entry.Games)+" played", x, centerY+radius+98, valueFace, rgba(169, 176, 255, 255))
 	}
 }
 
@@ -198,8 +199,9 @@ func drawLeaderboardRow(canvas *image.RGBA, entry persistence.LeaderboardEntry, 
 	name := leaderboardDisplayName(entry, viewerID, viewerName)
 	drawText(canvas, itoa(rank), 56, y+18, rankFace, rgba(245, 246, 249, 255))
 	drawLeaderboardAvatar(canvas, 126, y+31, 25, name, avatar, leaderboardRankAccent(rank), leaderboardRankAccentText(rank), 16)
-	drawText(canvas, fitLeaderboardText(name, nameFace, 610), 170, y+15, nameFace, rgba(246, 247, 251, 255))
-	drawRightText(canvas, scoreboardLabel(entry, loserboard), 936, y+18, valueFace, rgba(169, 176, 255, 255))
+	drawText(canvas, fitLeaderboardText(name, nameFace, 460), 170, y+15, nameFace, rgba(246, 247, 251, 255))
+	drawRightText(canvas, scoreboardLabel(entry, loserboard), 936, y+3, valueFace, rgba(169, 176, 255, 255))
+	drawRightText(canvas, itoa(entry.Games)+" played", 936, y+32, valueFace, rgba(169, 176, 255, 255))
 }
 
 func leaderboardRankAccent(rank int) color.RGBA {
@@ -242,11 +244,11 @@ func lossesLabel(losses int) string {
 }
 
 func scoreboardLabel(entry persistence.LeaderboardEntry, loserboard bool) string {
-	label := winsLabel(entry.Wins)
+	rateLabel, rate := "win rate", entry.WinRate
 	if loserboard {
-		label = lossesLabel(entry.Losses)
+		rateLabel, rate = "loss rate", entry.LossRate
 	}
-	return label + " · " + itoa(entry.Games) + " times played"
+	return strconv.FormatFloat(rate, 'f', 1, 64) + "% " + rateLabel
 }
 
 func drawLeaderboardAvatar(canvas *image.RGBA, x, y, radius int, name string, avatar image.Image, background, foreground color.RGBA, fontSize float64) {

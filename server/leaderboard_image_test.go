@@ -63,11 +63,11 @@ func TestLeaderboardDisplayNameUsesFullViewerNickname(t *testing.T) {
 }
 
 func TestScoreboardLabelIncludesTimesPlayed(t *testing.T) {
-	entry := persistence.LeaderboardEntry{Wins: 2, Losses: 3, Games: 4}
-	if got := scoreboardLabel(entry, false); got != "2 wins · 4 times played" {
+	entry := persistence.LeaderboardEntry{Wins: 2, Losses: 1, Games: 4, WinRate: 50, LossRate: 25}
+	if got := scoreboardLabel(entry, false); got != "50.0% win rate" {
 		t.Fatalf("leaderboard label = %q", got)
 	}
-	if got := scoreboardLabel(entry, true); got != "3 losses · 4 times played" {
+	if got := scoreboardLabel(entry, true); got != "25.0% loss rate" {
 		t.Fatalf("loserboard label = %q", got)
 	}
 }

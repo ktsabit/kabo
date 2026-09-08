@@ -221,14 +221,14 @@ func (s *Store) scoreboardPage(guildID string, offset, limit int, loserboard boo
 		return nil, 0, err
 	}
 
-	orderBy := `stats.wins DESC,
-		(stats.wins * 1.0 / stats.games) DESC,
+	orderBy := `(stats.wins * 1.0 / stats.games) DESC,
+		stats.wins DESC,
 		(stats.total_score * 1.0 / stats.games) ASC,
 		stats.games DESC,
 		COALESCE(display_name, stats.player_id) COLLATE NOCASE ASC`
 	if loserboard {
-		orderBy = `stats.losses DESC,
-			(stats.losses * 1.0 / stats.games) DESC,
+		orderBy = `(stats.losses * 1.0 / stats.games) DESC,
+			stats.losses DESC,
 			(stats.total_score * 1.0 / stats.games) DESC,
 			stats.games DESC,
 			COALESCE(display_name, stats.player_id) COLLATE NOCASE ASC`

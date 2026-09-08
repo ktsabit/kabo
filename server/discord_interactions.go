@@ -127,7 +127,7 @@ type discordEmoji struct {
 
 type discordWebhookEdit struct {
 	Content         *string                `json:"content,omitempty"`
-	Embeds          []discordEmbed         `json:"embeds,omitempty"`
+	Embeds          []discordEmbed         `json:"embeds"`
 	Attachments     []discordAttachment    `json:"attachments,omitempty"`
 	AllowedMentions discordAllowedMentions `json:"allowed_mentions"`
 	Components      []discordComponent     `json:"components,omitempty"`
@@ -147,6 +147,7 @@ type discordCommandDefinition struct {
 
 type discordRegisteredCommand struct {
 	ID   string `json:"id"`
+	Name string `json:"name"`
 	Type int    `json:"type"`
 }
 
@@ -320,17 +321,16 @@ func (s *server) completeScoreboardPage(interaction discordInteraction, page int
 	image, err := renderScoreboardPagePNG(entries, s.fetchLeaderboardAvatars(entries), page*leaderboardSize, ownerID, viewerName, board == loserboardCommandName)
 	if err != nil {
 		log.Printf("render Discord %s for guild %s: %v", board, interaction.GuildID, err)
-		if err := s.editDiscordOriginal(interaction, renderScoreboardPageFallback(entries, page*leaderboardSize, board == loserboardCommandName)); err != nil {
+		if err := s.editDiscordOriginal(interaction, "Could not render the scoreboard image. Please try again."); err != nil {
 			log.Printf("edit Discord %s fallback: %v", board, err)
 		}
 		return
 	}
 
-	embed := renderScoreboardEmbed(entries, "attachment://"+leaderboardImageFilename, board == loserboardCommandName)
 	components := renderScoreboardComponents(board, ownerID, page, leaderboardPageCount(total))
-	if err := s.editDiscordOriginalWithImage(interaction, embed, image, components); err != nil {
+	if err := s.editDiscordOriginalWithImage(interaction, image, components); err != nil {
 		log.Printf("upload Discord %s for guild %s: %v", board, interaction.GuildID, err)
-		if fallbackErr := s.editDiscordOriginal(interaction, renderScoreboardPageFallback(entries, page*leaderboardSize, board == loserboardCommandName)); fallbackErr != nil {
+		if fallbackErr := s.editDiscordOriginal(interaction, "Could not upload the scoreboard image. Please try again."); fallbackErr != nil {
 			log.Printf("edit Discord %s after upload failure: %v", board, fallbackErr)
 		}
 	}
@@ -508,10 +508,38 @@ func registerLeaderboardCommand(ctx context.Context, clientID, botToken, guildID
 	}
 	endpoint += "/commands"
 
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Authorization", "Bot "+botToken)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		responseBody, _ := io.ReadAll(io.LimitReader(response.Body, 1024))
+		response.Body.Close()
+		return fmt.Errorf("list Discord commands: Discord returned %s: %s", response.Status, strings.TrimSpace(string(responseBody)))
+	}
+	var registered []discordRegisteredCommand
+	decodeErr := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&registered)
+	response.Body.Close()
+	if decodeErr != nil {
+		return decodeErr
+	}
+	registeredNames := make(map[string]bool, len(registered))
+	for _, command := range registered {
+		registeredNames[command.Name] = true
+	}
+
 	for _, command := range []discordCommandDefinition{
 		{Name: leaderboardCommandName, Description: "Show this server's Kabo leaderboard", Type: 1},
 		{Name: loserboardCommandName, Description: "Show this server's Kabo loserboard", Type: 1},
 	} {
+		if registeredNames[command.Name] {
+			continue
+		}
 		body, err := json.Marshal(command)
 		if err != nil {
 			return err
@@ -613,9 +641,11 @@ func (s *server) editDiscordOriginal(interaction discordInteraction, content str
 	return s.sendDiscordWebhookEdit(interaction, payload, nil)
 }
 
-func (s *server) editDiscordOriginalWithImage(interaction discordInteraction, embed discordEmbed, image []byte, components []discordComponent) error {
+func (s *server) editDiscordOriginalWithImage(interaction discordInteraction, image []byte, components []discordComponent) error {
+	content := ""
 	payload := discordWebhookEdit{
-		Embeds:     []discordEmbed{embed},
+		Content:    &content,
+		Embeds:     []discordEmbed{},
 		Components: components,
 		Attachments: []discordAttachment{{
 			ID:       0,
