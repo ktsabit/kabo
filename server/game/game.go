@@ -1172,15 +1172,14 @@ func playerScore(p *Player) int {
 }
 
 func newDeck() []Card {
-	deck := make([]Card, 0, 54)
+	deck := make([]Card, 0, 56)
 	for _, suit := range []Suit{Clubs, Diamonds, Hearts, Spades} {
 		for rank := 1; rank <= 13; rank++ {
 			deck = append(deck, Card{ID: fmt.Sprintf("%s-%d", suit, rank), Rank: rank, Suit: suit})
 		}
 	}
-	deck = append(deck,
-		Card{ID: "joker-1", Rank: 0, Suit: Joker},
-		Card{ID: "joker-2", Rank: 0, Suit: Joker},
-	)
+	for number := 1; number <= 4; number++ {
+		deck = append(deck, Card{ID: fmt.Sprintf("joker-%d", number), Rank: 0, Suit: Joker})
+	}
 	return deck
 }

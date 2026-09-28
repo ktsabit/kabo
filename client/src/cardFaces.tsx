@@ -24,7 +24,8 @@ function rankSuffix(rank: number): string {
 
 export function faceName(card: Card): string {
   if (card.rank === 0 || card.suit === "joker") {
-    return card.id.endsWith("2") ? "J2" : "J1";
+    const number = Number(card.id.replace(/^.*-/, ""));
+    return number > 0 && number % 2 === 0 ? "J2" : "J1";
   }
   return `${suitPrefix[card.suit]}${rankSuffix(card.rank)}`;
 }

@@ -24,6 +24,23 @@ func TestCardScore(t *testing.T) {
 	}
 }
 
+func TestNewDeckHasFourJokers(t *testing.T) {
+	deck := newDeck()
+	if len(deck) != 56 {
+		t.Fatalf("newDeck() has %d cards, want 56", len(deck))
+	}
+
+	jokers := 0
+	for _, card := range deck {
+		if card.Suit == Joker {
+			jokers++
+		}
+	}
+	if jokers != 4 {
+		t.Fatalf("newDeck() has %d jokers, want 4", jokers)
+	}
+}
+
 func TestInitialCardsAreOnlyRevealedToTheirOwner(t *testing.T) {
 	g := New("room", rand.New(rand.NewSource(7)))
 	_, _ = g.AddOrReconnect("a", "Ada")
